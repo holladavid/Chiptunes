@@ -506,38 +506,43 @@ function generateBigAlecStyleTrack() {
 
 const AMIGA_SAMPLES = {};
 
-// Erschafft eine fette Techno-Kickdrum (Sine Sweep)
+// ==========================================
+// AMIGA PAULA INSTRUMENTE & HELFER (KORRIGIERT)
+// ==========================================
+
+// Erschafft eine Kickdrum, geeicht auf Amiga 8.3kHz (Note C-3)
 function createKickSample() {
     let len = 4000;
     let data = new Float32Array(len);
     let phase = 0;
     for(let i=0; i<len; i++) {
-        let freq = 150 * Math.exp(-i / 800); // Pitch-Drop
-        phase += (freq * Math.PI * 2) / 22050;
-        data[i] = Math.sin(phase) * Math.exp(-i / 1000); // Fadeout
+        let freq = 150 * Math.exp(-i / 800); // Frequenz fällt rasant ab
+        phase += (freq * Math.PI * 2) / 8287; // Auf Amiga-Geschwindigkeit abgestimmt!
+        data[i] = Math.sin(phase) * Math.exp(-i / 1000); 
     }
     return data;
 }
 
-// Erschafft einen klassischen Tracker-Bass (Sägezahn mit Filter)
+// Erschafft einen echten ProTracker-Bass! (Exakt 64 Samples lang)
 function createBassSample() {
-    let len = 1000; // Sehr kurzes Sample, das geloopt wird
+    let len = 64; // Historisch korrekte Länge
     let data = new Float32Array(len);
     for(let i=0; i<len; i++) {
-        let saw = 2.0 * (i / len) - 1.0; 
-        data[i] = saw;
+        // Ein sauberes Sägezahn-Signal (Sawtooth)
+        data[i] = 2.0 * (i / len) - 1.0; 
     }
     return data;
 }
 
-// Erschafft einen Rave-Akkord-Stab (Minor Chord)
+// Erschafft einen Rave-Akkord, abgestimmt auf Amiga 8.3kHz
 function createChordSample() {
     let len = 8000;
     let data = new Float32Array(len);
+    let w = (261.63 * Math.PI * 2) / 8287; // Basis-Pitch (C4)
     for(let i=0; i<len; i++) {
-        let p1 = Math.sin(i * 0.05); // Grundton
-        let p2 = Math.sin(i * 0.05 * 1.189); // Kleine Terz
-        let p3 = Math.sin(i * 0.05 * 1.498); // Quinte
+        let p1 = Math.sin(i * w); 
+        let p2 = Math.sin(i * w * 1.189); // Kleine Terz
+        let p3 = Math.sin(i * w * 1.498); // Quinte
         data[i] = ((p1 + p2 + p3) / 3.0) * Math.exp(-i / 3000);
     }
     return data;
