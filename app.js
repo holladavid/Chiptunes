@@ -1,63 +1,67 @@
 // Globale Variablen für unser Audio-System
 let audioCtx;
 let ymNode;
-let paulaNode; // NEU
+let paulaNode; 
+let sidNode; // NEU: Der C64 Endgegner
 let currentOscValue = 0; 
 let activeSystem = 'atari'; // Merkt sich, welcher Chip gerade aktiv ist
+
 
 document.addEventListener("DOMContentLoaded", () => {
     const bootScreen = document.getElementById("boot-screen");
     const demoContainer = document.getElementById("demo-container");
 
-    // 1. Klick auf den Startbildschirm (User-Interaktion erlaubt Audio!)
     bootScreen.addEventListener("click", async () => {
         bootScreen.classList.add("hidden");
         demoContainer.classList.remove("hidden");
         
         console.log("Audio Engine Booting...");
         
-        // Audio API und Visualisierungen starten
-        
         await initAudioEngine();
         initVisuals(); 
         initScroller(); 
+        
+        // BUGFIX: Initialisiere sofort das C64 Theme und lade den ersten Track!
+        setTheme('theme-c64');
+        selectAndPlayTrack(0, 'c64'); // Auto-Play startet!
     });
 });
 
 async function initAudioEngine() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    
     try {
-        // Lade BEIDE Soundchips in den Browser!
         await audioCtx.audioWorklet.addModule('ym-worklet.js');
         await audioCtx.audioWorklet.addModule('paula-worklet.js');
+        await audioCtx.audioWorklet.addModule('sid-worklet.js'); // NEU
         
         ymNode = new AudioWorkletNode(audioCtx, 'ym-processor');
         paulaNode = new AudioWorkletNode(audioCtx, 'paula-processor');
+        sidNode = new AudioWorkletNode(audioCtx, 'sid-processor'); // NEU
         
-        // Wir verbinden den Amiga-Chip noch mit einer leichten Filter-Node (Amiga LED Filter Simulation!)
         const amigaFilter = audioCtx.createBiquadFilter();
         amigaFilter.type = 'lowpass';
-        amigaFilter.frequency.value = 6000; // Typische Amiga-Mitten-Dämpfung
+        amigaFilter.frequency.value = 6000; 
         
         ymNode.connect(audioCtx.destination);
         paulaNode.connect(amigaFilter).connect(audioCtx.destination);
+        sidNode.connect(audioCtx.destination); // C64 geht direkt raus (hat sein eigenes Filter)
         
-        // Event-Listener für das Oszilloskop von beiden Chips
         const visualHandler = (e) => {
             if (e.data.type === 'VISUAL_DATA') currentOscValue = e.data.value;
         };
         ymNode.port.onmessage = visualHandler;
         paulaNode.port.onmessage = visualHandler;
+        sidNode.port.onmessage = visualHandler; // NEU
 
-        console.log("YM2149 & Paula 8364 sind online!");
-        
-        // Wir generieren einmalig unsere Amiga-Instrumente und laden sie in den RAM des Paula-Chips
+        console.log("ALLE 3 SOUNDCHIPS SIND ONLINE! (YM, PAULA, SID)");
         uploadAmigaSamples();
 
-    } catch (e) {
-        console.error("AudioWorklet Fehler:", e);
-    }
+    } catch (e) { console.error("AudioWorklet Fehler:", e); }
+}
+
+// Hilfsfunktion, um SID Register zu schreiben
+function writeSIDReg(reg, val) {
+    if(sidNode) sidNode.port.postMessage({ type: 'WRITE_REG', reg: reg, val: val });
 }
 
 // Hilfsfunktion: Schreibt einen Wert in ein YM-Register
@@ -102,25 +106,63 @@ function playProofOfConceptBeep() {
     }, 2000);
 }
 
+// In der startPlayback() Funktion den C64 Zweig einbauen:
+function startPlayback() {
+    if (isPlaying || trackData.length === 0) return;
+    isPlaying = true;
+    
+    playTimer = setInterval(() => {
+        let frame = trackData[currentFrame];
+        
+        if (frame.isAmiga) {
+            frame.cmds.forEach(cmd => playAmigaNote(cmd.ch, cmd.smp, cmd.per, cmd.vol));
+        } else if (frame.isC64) {
+            // C64 Register schreiben
+            for (let r = 0; r < 29; r++) { writeSIDReg(r, frame.regs[r]); }
+        } else {
+            // Atari YM Register schreiben
+            for (let r = 0; r < 14; r++) { writeYMReg(r, frame[r]); }
+        }
+        
+        currentFrame++;
+        if (currentFrame >= trackData.length) currentFrame = 0; 
+    }, 20);
+}
+
+// In der stopPlayback() Funktion Stille für den SID hinzufügen:
+function stopPlayback() {
+    if (!isPlaying) return;
+    clearInterval(playTimer);
+    isPlaying = false;
+    
+    writeYMReg(8, 0); writeYMReg(9, 0); writeYMReg(10, 0); // Atari aus
+    for(let i=0; i<4; i++) playAmigaNote(i, null, 1, 0);   // Amiga aus
+    writeSIDReg(24, 0); // C64 Master Volume aus
+}
+
+// --- BUGFIX: Sicheres Umschalten der Themes ---
 function setTheme(themeName) {
     document.body.className = themeName;
     
+    // Die Tabs visuell umschalten (Ohne das veraltete 'event.target')
     const tabs = document.querySelectorAll('.tab-btn');
-    tabs.forEach(tab => tab.classList.remove('active'));
-    event.target.classList.add('active');
+    tabs.forEach(tab => {
+        tab.classList.remove('active');
+        // Wir prüfen, ob der Button-Code den Namen unseres Themes enthält
+        if (tab.getAttribute('onclick').includes(themeName)) {
+            tab.classList.add('active');
+        }
+    });
 
-    // System-Variable merken
+    // Das aktive System global merken
     activeSystem = themeName === 'theme-atari' ? 'atari' : 
                    themeName === 'theme-amiga' ? 'amiga' : 'c64';
 
-    if (activeSystem === 'atari') {
-        renderTracklist('atari');
-    } else if (activeSystem === 'amiga') {
-        renderTracklist('amiga');
-    } else {
-        document.getElementById('tracklist').innerHTML = '<li>[ SID CHIP NOT YET IMPLEMENTED ]</li>';
-        stopPlayback();
-    }
+    // Die korrekte Liste in das UI rendern
+    renderTracklist(activeSystem);
+    
+    // Beim Umschalten des Systems das alte Playback stoppen
+    stopPlayback(); 
 }
 
 // --- ZONE 1: DAS ECHTZEIT-OSZILLOSKOP ---
@@ -246,15 +288,82 @@ function initScroller() {
 // ==========================================
 
 // Unser Musik-Katalog
+// --- DAS TRACK REGISTRY ---
 const trackRegistry = {
+    c64: [
+        { title: "1. Rob Hubbard - Commando (Style)", generator: generateHubbardStyleTrack, composerInfo: "Rob Hubbard ist der absolute C64-Rockgott. Er nutzte die Pulsweitenmodulation (PWM) der SID-Rechteckwelle, um unfassbar dicke, wabernde Bässe zu erzeugen." }
+    ],
     atari: [
         { title: "1. Jochen Hippel - Wings of Death (Style)", generator: generateHippelStyleTrack, composerInfo: "Jochen Hippel (Mad Max) war der Meister des Atari YM-Chips." },
         { title: "2. Big Alec - Syntax Terror (Style)", generator: generateBigAlecStyleTrack, composerInfo: "Big Alec von der Gruppe Delta Force definierte den rohen, treibenden Demoscene-Sound." }
     ],
     amiga: [
-        { title: "1. Jester (Sanity) - Elysium (Style)", generator: generateJesterStyleTrack, composerInfo: "Jester (Volker Tripp) nutzte das 4-Kanal MOD Format meisterhaft für die Demos der Gruppe Sanity. Extrem sauberes Panning und funkige Grooves." }
+        { title: "1. Jester (Sanity) - Elysium (Style)", generator: generateJesterStyleTrack, composerInfo: "Jester (Volker Tripp) nutzte das 4-Kanal MOD Format meisterhaft für die Demos der Gruppe Sanity." }
     ]
 };
+
+// ==========================================
+// TRACK GENERATOR 4: C64 SID "Hubbard" Style
+// ==========================================
+function generateHubbardStyleTrack() {
+    let data = [];
+    let frames = 400; // 8 Sekunden Loop bei 50Hz
+    
+    // Hilfsfunktion: Note zu SID-Frequenz
+    // C-2 = 130.81Hz -> SID Freq = Hz * 16777216 / 985248
+    const fC2 = 2227, fDs2 = 2649, fG2 = 3337; 
+    const fC3 = 4454, fDs3 = 5298, fF3 = 5947, fG3 = 6675;
+
+    for (let i = 0; i < frames; i++) {
+        let frame = { isC64: true, regs: new Uint8Array(29) };
+        
+        // --- FILTER SETUP (Register 21-24) ---
+        // Hubbard liebte wabernde Lowpass-Filter. Wir sweepen den Cutoff hoch und runter.
+        let cutoff = 50 + Math.floor(Math.sin(i * 0.05) * 40); 
+        frame.regs[21] = cutoff & 7; // Cutoff Lo
+        frame.regs[22] = cutoff >> 3; // Cutoff Hi
+        // Resonanz mittel (Bit 4-7) und Voice 1+2 ins Filter schicken (Bit 0-1)
+        frame.regs[23] = (8 << 4) | 3; 
+        // Volume max (15), Mode: Lowpass (Bit 4 = 16)
+        frame.regs[24] = 16 | 15; 
+
+        // --- KANAL 1: DER WABERNDE PWM-BASS ---
+        let bassNote = (Math.floor(i / 20) % 2 === 0) ? fC2 : fDs2;
+        frame.regs[0] = bassNote & 0xFF; // Freq Lo
+        frame.regs[1] = (bassNote >> 8) & 0xFF; // Freq Hi
+        
+        // PWM (Pulse Width) LFO: Das Geheimnis des fetten C64 Sounds!
+        let pw = 2048 + Math.floor(Math.sin(i * 0.1) * 1500);
+        frame.regs[2] = pw & 0xFF;
+        frame.regs[3] = (pw >> 8) & 0x0F;
+        
+        // Control Reg: Pulse (64) + Gate an (1) -> 65 (0x41)
+        // Um einen harten Attack zu triggern, schalten wir Gate bei jedem 10. Frame kurz ab.
+        frame.regs[4] = (i % 10 === 9) ? 64 : 65; 
+
+        // --- KANAL 2: DIE LEAD MELODIE (Sawtooth) ---
+        let leadNotes = [fC3, fC3, fDs3, fG3, fF3, fDs3];
+        let leadNote = leadNotes[Math.floor(i / 15) % leadNotes.length];
+        frame.regs[7] = leadNote & 0xFF;
+        frame.regs[8] = (leadNote >> 8) & 0xFF;
+        frame.regs[11] = (i % 15 === 14) ? 32 : 33; // Sawtooth (32) + Gate (1)
+
+        // --- KANAL 3: DRUMS (Noise) ---
+        // Hubbard machte Drums durch extrem kurze Noise-Bursts
+        if (i % 20 === 0) { // Kick
+            frame.regs[14] = 0; frame.regs[15] = 10; // Tiefe Frequenz
+            frame.regs[18] = 129; // Noise (128) + Gate (1)
+        } else if ((i + 10) % 20 === 0) { // Snare
+            frame.regs[14] = 0; frame.regs[15] = 40; // Hohe Frequenz
+            frame.regs[18] = 129; // Noise + Gate
+        } else {
+            frame.regs[18] = 128; // Gate aus
+        }
+
+        data.push(frame);
+    }
+    return data;
+}
 
 let trackData = [];    
 let currentFrame = 0;  
@@ -312,6 +421,7 @@ function selectAndPlayTrack(index, system) {
 }
 
 // 50 Hz Player Engine (UPDATE)
+// In der startPlayback() Funktion den C64 Zweig einbauen:
 function startPlayback() {
     if (isPlaying || trackData.length === 0) return;
     isPlaying = true;
@@ -320,12 +430,12 @@ function startPlayback() {
         let frame = trackData[currentFrame];
         
         if (frame.isAmiga) {
-            // Amiga Track spielen
-            frame.cmds.forEach(cmd => {
-                playAmigaNote(cmd.ch, cmd.smp, cmd.per, cmd.vol);
-            });
+            frame.cmds.forEach(cmd => playAmigaNote(cmd.ch, cmd.smp, cmd.per, cmd.vol));
+        } else if (frame.isC64) {
+            // C64 Register schreiben
+            for (let r = 0; r < 29; r++) { writeSIDReg(r, frame.regs[r]); }
         } else {
-            // Atari Track spielen
+            // Atari YM Register schreiben
             for (let r = 0; r < 14; r++) { writeYMReg(r, frame[r]); }
         }
         
@@ -334,25 +444,26 @@ function startPlayback() {
     }, 20);
 }
 
+// In der stopPlayback() Funktion Stille für den SID hinzufügen:
 function stopPlayback() {
     if (!isPlaying) return;
     clearInterval(playTimer);
     isPlaying = false;
     
-    // Atari Stille
-    writeYMReg(8, 0); writeYMReg(9, 0); writeYMReg(10, 0);
-    // Amiga Stille
-    for(let i=0; i<4; i++) playAmigaNote(i, null, 1, 0);
+    writeYMReg(8, 0); writeYMReg(9, 0); writeYMReg(10, 0); // Atari aus
+    for(let i=0; i<4; i++) playAmigaNote(i, null, 1, 0);   // Amiga aus
+    writeSIDReg(24, 0); // C64 Master Volume aus
 }
 
-
 // --- BUTTONS BINDEN ---
+// --- BUGFIX: Der Play-Button ---
 document.getElementById('btn-play').addEventListener('click', () => {
-    if (isPlaying) stopPlayback();
-    else {
-        // Falls noch gar kein Track geladen ist, den ersten nehmen
+    if (isPlaying) {
+        stopPlayback();
+    } else {
+        // Falls noch nichts ausgewählt ist, nimm den ersten Track des aktuellen Systems
         if (trackData.length === 0) {
-            selectAndPlayTrack(0, 'atari');
+            selectAndPlayTrack(0, activeSystem); 
         } else {
             startPlayback();
         }
