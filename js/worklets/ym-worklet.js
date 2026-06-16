@@ -200,7 +200,7 @@ class YMProcessor extends AudioWorkletProcessor {
         if (this.visCounter % 4 === 0) {
             let isAudible = Math.abs(currentVisualValue) > 0.001;
             if (isAudible || this.wasAudible) {
-                this.port.postMessage({ type: 'VISUAL_DATA', value: currentVisualValue, frame: this.currentFrame });
+                this.port.postMessage({ type: 'VISUAL_DATA', value: currentVisualValue, frame: this.currentFrame, regs: this.regs });
             }
             this.wasAudible = isAudible;
         }

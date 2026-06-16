@@ -1,27 +1,29 @@
 /* Globale Variablen für dynamisches Theming */
 :root {
-    /* Standard: C64 Theme */
-    --bg-color: #352879;      /* C64 Dunkelblau */
-    --fg-color: #6c5eb5;      /* C64 Hellblau */
+    --bg-color: #352879;      
+    --fg-color: #6c5eb5;      
     --text-color: #6c5eb5;
+    --panel-text: #352879;    /* NEU: Schriftfarbe für Panels */
     --highlight-color: #ffffff;
     --font-main: 'Press Start 2P', monospace;
     --font-size-base: 10px;
 }
 
 body.theme-amiga {
-    --bg-color: #000000;      /* Workbench Rand */
-    --fg-color: #0055aa;      /* Amiga Blau */
+    --bg-color: #000000;      
+    --fg-color: #002244;      /* Dunkleres Panel-Blau */
     --text-color: #ffffff;
-    --highlight-color: #ff8800; /* Amiga Orange */
+    --panel-text: #ff8800;    /* Orange Schrift im Panel */
+    --highlight-color: #ffffff; 
     --font-main: 'VT323', monospace;
     --font-size-base: 18px;
 }
 
 body.theme-atari {
-    --bg-color: #000000;      /* Atari ST Monochrom */
-    --fg-color: #222222;
-    --text-color: #55ff55;    /* Atari Grün */
+    --bg-color: #000000;      
+    --fg-color: #111111;      /* Sehr dunkles Grau */
+    --text-color: #55ff55;    
+    --panel-text: #55ff55;    /* Knallgrüne Schrift im Panel! */
     --highlight-color: #ffffff;
     --font-main: 'VT323', monospace;
     --font-size-base: 20px;
@@ -105,15 +107,10 @@ body, html {
     gap: 20px;
 }
 
-/* Linke Spalte: Player */
+/* --- BUGFIX: KONTRAST & LESBARKEIT IM PLAYER --- */
 #player-panel {
-    flex: 0 0 35%;
-    display: flex;
-    color: var(--bg-color); /* Schrift dunkelblau auf hellblauem Grund */
-    flex-direction: column;
-    border: 2px solid var(--text-color);
     background-color: var(--fg-color);
-    padding: 10px;
+    color: var(--panel-text); 
 }
 
 .system-tabs {
@@ -146,20 +143,23 @@ body, html {
 }
 
 #tracklist li {
-    cursor: pointer;
-    padding: 2px 5px;
-    color: var(--bg-color); 
+    color: var(--panel-text); 
+    transition: background 0.2s, color 0.2s;
 }
 
 #tracklist li:hover {
-    background: var(--bg-color); /* Bei Hover: Hintergrund dunkel... */
-    color: var(--fg-color);      /* ...und Schrift hell */
+    background: var(--panel-text); 
+    color: var(--fg-color);      
 }
 
+/* Pulsierender Track: Ändert NUR die Farben, keine Opacity! */
 .active-track {
-    background: var(--highlight-color);
-    color: var(--bg-color) !important;
-    animation: blinker 2s infinite;
+    animation: pulse-track 1.5s infinite alternate;
+}
+
+@keyframes pulse-track {
+    0% { background: var(--highlight-color); color: #000 !important; }
+    100% { background: var(--panel-text); color: #000 !important; }
 }
 
 .controls {
@@ -170,13 +170,8 @@ body, html {
 }
 
 .controls button {
-    background: none;
-    border: 2px solid var(--text-color);
-    font-size: 20px;
-    cursor: pointer;
-    padding: 5px 10px;
-    color: var(--bg-color);
-    border-color: var(--bg-color);
+    color: var(--panel-text);
+    border-color: var(--panel-text);
 }
 /* --- TIMELINE --- */
 .timeline-control {
@@ -316,4 +311,64 @@ body, html {
     color: var(--text-color);
     display: inline-block;
     width: 80px;
+}
+
+/* --- CHIP HUD (Register Visualisierung) --- */
+#chip-hud {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 320px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid var(--text-color);
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    padding: 10px;
+    color: var(--highlight-color);
+    pointer-events: auto; /* Damit der Button klickbar ist */
+    z-index: 10;
+}
+.hud-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px dashed var(--text-color);
+    padding-bottom: 5px;
+    margin-bottom: 10px;
+    font-size: calc(var(--font-size-base) * 0.9);
+}
+#btn-hud-info {
+    background: none;
+    border: none;
+    color: var(--highlight-color);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: inherit;
+}
+#btn-hud-info:hover { color: #ffffff; }
+
+#hud-matrix {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+}
+.hud-cell {
+    background: rgba(255, 255, 255, 0.1);
+    text-align: center;
+    padding: 4px 2px;
+}
+.hud-cell-label {
+    font-size: calc(var(--font-size-base) * 0.6);
+    color: var(--text-color);
+    margin-bottom: 2px;
+}
+.hud-cell-val {
+    font-size: calc(var(--font-size-base) * 0.9);
+}
+#hud-legend {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--text-color);
+    font-size: calc(var(--font-size-base) * 0.7);
+    line-height: 1.4;
+    color: var(--text-color);
 }

@@ -6,7 +6,9 @@ const myYmFiles = [
     "turrican1_world_1_1.YM",      // Lade hier deine entpackten Lieblingstracks rein...
     "WINGLEV1.YM",               // ...
     "GOLDRUN.YM",
-    "spherical_intro.YM"
+    "spherical_intro.YM",
+    "BIONIC1.YM",
+    "Dragonflight_Title.YM"
 ];
 
 // Wir generieren mit .map() automatisch für jeden Namen einen fertigen Track-Eintrag!

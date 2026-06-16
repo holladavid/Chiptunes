@@ -22,9 +22,16 @@
         <div id="visual-zone">
             <canvas id="demo-canvas"></canvas>
             
-            <!-- NEU: Das nerdige Hardware-HUD -->
+            <!-- NEU: Das nerdige Hardware-HUD mit Cheat Sheet -->
             <div id="chip-hud">
-                <div id="hud-content">INITIALIZING DSP SENSORS...</div>
+                <div class="hud-header">
+                    <span id="hud-title">DSP REGISTERS</span>
+                    <button id="btn-hud-info" title="Toggle Cheat Sheet">[?]</button>
+                </div>
+                <!-- Hier rendern wir die tanzenden Hex-Werte -->
+                <div id="hud-matrix"></div>
+                <!-- Der Spickzettel (Standardmäßig versteckt) -->
+                <div id="hud-legend" class="hidden"></div>
             </div>
 
             <div class="scanlines"></div> <!-- CRT Monitor Effekt -->

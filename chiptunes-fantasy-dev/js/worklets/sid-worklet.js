@@ -109,9 +109,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             let isAudible = Math.abs(visualValue) > 0.001;
             // Sende Daten NUR, wenn Ton da ist, oder wenn der Ton GERADE EBEN aufgehört hat 
             if (isAudible || this.wasAudible) {
-                // NEU: Wir senden "frame: this.currentFrame" mit!
-                this.port.postMessage({ type: 'VISUAL_DATA', value: visualValue, frame: this.currentFrame });
-            }            this.wasAudible = isAudible;
+                this.port.postMessage({ type: 'VISUAL_DATA', value: visualValue, frame: this.currentFrame, regs: this.regs });
+            }
         }
         return true;
     }

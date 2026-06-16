@@ -91,11 +91,18 @@ class PaulaProcessor extends AudioWorkletProcessor {
         this.visCounter = (this.visCounter || 0) + 1;
         if (this.visCounter % 4 === 0) {
             let isAudible = Math.abs(oscValue) > 0.001;
-            // Sende Daten NUR, wenn Ton da ist, oder wenn der Ton GERADE EBEN aufgehört hat 
             if (isAudible || this.wasAudible) {
-                // NEU: Wir senden "frame: this.currentFrame" mit!
-                this.port.postMessage({ type: 'VISUAL_DATA', value: oscValue, frame: this.currentFrame });
-            }            this.wasAudible = isAudible;
+                // NEU: Wir packen Pitch und Volume der 4 Kanäle in ein Dummy-Array für das HUD
+                let fakeRegs = new Uint8Array(16);
+                for(let c=0; c<4; c++) {
+                    fakeRegs[c*4] = (this.channels[c].period >> 8) & 0xFF; // Period High
+                    fakeRegs[c*4+1] = this.channels[c].period & 0xFF;      // Period Low
+                    fakeRegs[c*4+2] = Math.floor(this.channels[c].vol * 64); // Volume
+                    fakeRegs[c*4+3] = this.channels[c].data ? 1 : 0;       // Aktiv?
+                }
+                this.port.postMessage({ type: 'VISUAL_DATA', value: oscValue, frame: this.currentFrame, regs: fakeRegs });
+            }
+            this.wasAudible = isAudible;
         }
         return true;
     }
