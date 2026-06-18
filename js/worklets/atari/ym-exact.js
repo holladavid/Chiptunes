@@ -1,32 +1,40 @@
 // =========================================================
-// YM2149F CORE (CYCLE-EXACT, LOGARITHMIC DAC, OPTIMIZED)
+// YM2149F CORE (CYCLE-EXACT, LOG-DAC, POLY-BLEP ANTI-ALIASING)
 // =========================================================
 
-// Die physikalisch exakten Spannungswerte des YM2149 DAC (Logarithmisch)
 const YM_DAC = [
     0.0000, 0.0137, 0.0205, 0.0291, 0.0423, 0.0618, 0.0847, 0.1369, 
     0.1691, 0.2647, 0.3527, 0.4499, 0.5704, 0.6873, 0.8482, 1.0000
 ];
 
-class YMProcessor extends AudioWorkletProcessor {
+// Anti-Aliasing Mathematik (Glättet die scharfen Kanten der digitalen Rechteckwelle)
+function polyBLEP(t, dt) {
+    if (t < dt) {
+        t /= dt;
+        return t + t - t * t - 1.0;
+    } else if (t > 1.0 - dt) {
+        t = (t - 1.0 + dt) / dt;
+        return 1.0 - (t + t - t * t);
+    }
+    return 0.0;
+}
+
+class YMExactProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        this.clock = 2000000; // 2 MHz
+        this.clock = 2000000; 
         this.regs = new Uint8Array(16); 
         this.phaseA = 0; this.phaseB = 0; this.phaseC = 0;
         this.noiseLfsr = 1; this.noisePhase = 0; this.noiseOutput = 1;
         this.envPhase = 0.0;
         
-        // Caching Variablen für extreme Performance
         this.incA = 0; this.incB = 0; this.incC = 0;
         this.incNoise = 0; this.incEnv = 0;
         this.toneA = false; this.toneB = false; this.toneC = false;
         this.noiseA = false; this.noiseB = false; this.noiseC = false;
         
-        // DC Blocker (Highpass) Variablen
-        this.lastIn = 0; this.lastOut = 0;
+        this.lastIn = 0; this.lastOut = 0; // DC Blocker
 
-        // Digidrum System
         this.digidrums = [];
         this.currentDigidrum = null;
         this.digiPos = 0;
@@ -47,7 +55,7 @@ class YMProcessor extends AudioWorkletProcessor {
                 this.lastDigiTrigger = 0;
                 this.envPhase = 0;
                 this.isPlaying = true;
-                this.updateInternals(); // Caches füllen!
+                this.updateInternals(); 
             } else if (event.data.type === 'STOP_TRACK') {
                 this.isPlaying = false;
             } else if (event.data.type === 'RESUME_TRACK') {
@@ -56,15 +64,15 @@ class YMProcessor extends AudioWorkletProcessor {
         };
     }
 
-    // Berechnet die Frequenz-Inkremente NUR neu, wenn Register sich ändern (50Hz)
     updateInternals() {
         let pA = ((this.regs[1] & 0x0F) << 8) | this.regs[0];
         let pB = ((this.regs[3] & 0x0F) << 8) | this.regs[2];
         let pC = ((this.regs[5] & 0x0F) << 8) | this.regs[4];
         
-        this.incA = pA === 0 ? 0 : (this.clock / (16 * pA)) / sampleRate;
-        this.incB = pB === 0 ? 0 : (this.clock / (16 * pB)) / sampleRate;
-        this.incC = pC === 0 ? 0 : (this.clock / (16 * pC)) / sampleRate;
+        // BUGFIX: Periode 0 ist nicht 0 Hz, sondern entspricht der Periode 1 (Ultra-Hoch)!
+        this.incA = (this.clock / (16 * (pA === 0 ? 1 : pA))) / sampleRate;
+        this.incB = (this.clock / (16 * (pB === 0 ? 1 : pB))) / sampleRate;
+        this.incC = (this.clock / (16 * (pC === 0 ? 1 : pC))) / sampleRate;
 
         let pN = this.regs[6] & 0x1F;
         this.incNoise = (this.clock / (16 * (pN === 0 ? 1 : pN))) / sampleRate;
@@ -88,20 +96,17 @@ class YMProcessor extends AudioWorkletProcessor {
 
         for (let i = 0; i < channelLeft.length; i++) {
             
-            // ECHTE PAUSE
             if (!this.isPlaying) {
                 channelLeft[i] = 0; if (channelRight) channelRight[i] = 0;
                 continue; 
             }
 
-            // --- 50HZ HARDWARE SEQUENZER ---
             if (this.isPlaying && this.trackData) {
                 this.sampleCounter--;
                 if (this.sampleCounter <= 0) {
                     this.sampleCounter += sampleRate / 50.0; 
                     
                     let frame = this.trackData[this.currentFrame];
-                    
                     for(let r=0; r<16; r++) {
                         if (r === 13) {
                             if (frame[13] !== 0xFF) {
@@ -113,7 +118,6 @@ class YMProcessor extends AudioWorkletProcessor {
                         }
                     }
                     
-                    // Digidrum Catcher (V3)
                     let activeDigiTrigger = 0;
                     if (frame[15] > 0) activeDigiTrigger = frame[15];
                     else if (frame[14] > 0) activeDigiTrigger = frame[14];
@@ -133,15 +137,11 @@ class YMProcessor extends AudioWorkletProcessor {
                     }
                     this.lastDigiTrigger = activeDigiTrigger;
                     
-                    // WICHTIG: Nach dem Beschreiben der Register Caches erneuern!
                     this.updateInternals();
-
                     this.currentFrame = (this.currentFrame + 1) % this.trackData.length;
                 }
             }
 
-            // --- HOCHGESCHWINDIGKEITS-DSP (Ab hier nur noch rohe Mathematik) ---
-            
             this.phaseA = (this.phaseA + this.incA) % 1.0;
             this.phaseB = (this.phaseB + this.incB) % 1.0;
             this.phaseC = (this.phaseC + this.incC) % 1.0;
@@ -154,15 +154,20 @@ class YMProcessor extends AudioWorkletProcessor {
                 this.noiseOutput = (this.noiseLfsr & 1) ? 1.0 : -1.0;
             }
 
-            let outA = this.toneA ? (this.phaseA < 0.5 ? 1.0 : -1.0) : 1.0;
-            let outB = this.toneB ? (this.phaseB < 0.5 ? 1.0 : -1.0) : 1.0;
-            let outC = this.toneC ? (this.phaseC < 0.5 ? 1.0 : -1.0) : 1.0;
+            // --- POLY-BLEP ANTI-ALIASING ---
+            // Anstatt einer harten Kante generieren wir eine glatte Kante. Das killt hohe Störtöne!
+            let sqA = (this.phaseA < 0.5 ? 1.0 : -1.0) + polyBLEP(this.phaseA, this.incA) - polyBLEP((this.phaseA + 0.5) % 1.0, this.incA);
+            let sqB = (this.phaseB < 0.5 ? 1.0 : -1.0) + polyBLEP(this.phaseB, this.incB) - polyBLEP((this.phaseB + 0.5) % 1.0, this.incB);
+            let sqC = (this.phaseC < 0.5 ? 1.0 : -1.0) + polyBLEP(this.phaseC, this.incC) - polyBLEP((this.phaseC + 0.5) % 1.0, this.incC);
+
+            let outA = this.toneA ? sqA : 1.0;
+            let outB = this.toneB ? sqB : 1.0;
+            let outC = this.toneC ? sqC : 1.0;
             
             if (this.noiseA) outA = (outA === 1.0 && this.noiseOutput === 1.0) ? 1.0 : -1.0;
             if (this.noiseB) outB = (outB === 1.0 && this.noiseOutput === 1.0) ? 1.0 : -1.0;
             if (this.noiseC) outC = (outC === 1.0 && this.noiseOutput === 1.0) ? 1.0 : -1.0;
 
-            // Hardware Envelope Generator (HEG)
             this.envPhase += this.incEnv;
             let shape = this.regs[13] & 0x0F;
             let cycles = Math.floor(this.envPhase);
@@ -185,10 +190,8 @@ class YMProcessor extends AudioWorkletProcessor {
                 envVolRaw = up ? localPhase : (1.0 - localPhase);
             }
             
-            // Konvertiere die lineare HEG-Phase in den 16-stufigen Hardware-Wert
             let envVolIndex = Math.floor(envVolRaw * 15.99);
 
-            // LOGARITHMISCHE DAC TABELLE ANWENDEN!
             let volA = (this.regs[8] & 0x10) ? YM_DAC[envVolIndex] : YM_DAC[this.regs[8] & 0x0F];
             let volB = (this.regs[9] & 0x10) ? YM_DAC[envVolIndex] : YM_DAC[this.regs[9] & 0x0F];
             let volC = (this.regs[10] & 0x10) ? YM_DAC[envVolIndex] : YM_DAC[this.regs[10] & 0x0F];
@@ -204,16 +207,13 @@ class YMProcessor extends AudioWorkletProcessor {
                 }
             }
 
-            // Raw Mix
             let rawOutput = ((outA * volA) + (outB * volB) + (outC * volC) + digiSample) / 4.0;
 
-            // DC BLOCKER (Zentriert die Welle auf 0, entfernt "Lautsprecher-Knacken")
+            // DC BLOCKER
             this.lastOut = rawOutput - this.lastIn + 0.995 * this.lastOut;
             this.lastIn = rawOutput;
             
             let finalOutput = this.lastOut;
-
-            // Hard Limiter
             if (finalOutput > 1.0) finalOutput = 1.0;
             if (finalOutput < -1.0) finalOutput = -1.0;
 
@@ -233,4 +233,4 @@ class YMProcessor extends AudioWorkletProcessor {
         return true; 
     }
 }
-registerProcessor('ym-processor', YMProcessor);
+registerProcessor('ym-exact-processor', YMExactProcessor); // NEUER REGISTRIERUNGS-NAME!
