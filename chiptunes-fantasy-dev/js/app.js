@@ -115,19 +115,36 @@ async function loadEmuCore(system, coreConfig) {
                 lastKnownFrame = e.data.frame || 0; 
                 currentChipRegs = e.data.regs; 
             }
+            
+            // DIE REPARIERTE UND OPTIMIERTE ROTE NERD-LED!
             if (e.data.type === 'DEBUG') {
                 let match = e.data.msg.match(/Drum (\d+)/);
-                let drumNo = match ? "#" + match[1] : "TRIG";
+                let drumNo = match ? "SMP #" + match[1] : "TRIG";
+                
                 const led = document.getElementById('hud-digi-led');
-                const val = document.getElementById('hud-digi-val');
+                const val = document.getElementById('digi-g-val'); // <-- BUGFIX: Die korrekte ID!
+                
                 if (led && val) {
+                    // 1. Lass den Text aufpoppen (Weiß leuchtend!)
                     val.innerText = drumNo;
+                    val.style.color = '#ffffff';
+                    val.style.textShadow = '0 0 10px #ffffff';
+                    
+                    // 2. LED auf Rot stellen
                     led.style.background = '#ff0000';
-                    led.style.boxShadow = '0 0 10px #ff0000';
-                    setTimeout(() => { 
+                    led.style.boxShadow = '0 0 12px #ff0000';
+                    
+                    // 3. Bestehenden Timeout löschen, falls ein extrem schneller Blastbeat kommt!
+                    if (val.timeoutId) clearTimeout(val.timeoutId);
+                    
+                    // 4. Nach 120ms (Perfekte Lesbarkeit) wieder abdunkeln
+                    val.timeoutId = setTimeout(() => { 
                         led.style.background = '#440000'; 
                         led.style.boxShadow = 'none';
-                    }, 50);
+                        val.style.color = ''; // Zurück auf CSS-Standard
+                        val.style.textShadow = 'none';
+                        val.innerText = '--'; // Nach dem Schlag wieder nullen
+                    }, 120);
                 }
             }
         };
