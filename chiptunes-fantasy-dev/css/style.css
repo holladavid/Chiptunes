@@ -337,15 +337,16 @@ body, html {
     margin-bottom: 15px;
     font-size: calc(var(--font-size-base) * 0.9);
 }
-#btn-hud-info {
+#btn-hud-info, #btn-hud-toggle {
     background: none;
     border: none;
     color: var(--highlight-color);
     cursor: pointer;
     font-family: inherit;
     font-size: inherit;
+    margin-left: 5px;
 }
-#btn-hud-info:hover { color: #ffffff; }
+#btn-hud-info:hover, #btn-hud-toggle:hover { color: #ffffff; }
 
 /* Die Hex-Matrix (Fallback für C64 / Amiga) */
 #hud-matrix {
@@ -475,6 +476,13 @@ body, html {
     body, html {
         overflow-y: auto; 
         height: auto;
+    }
+
+    /* Begrenzt die Höhe des aufgeklappten HUDs auf Handys */
+    #hud-body {
+        max-height: 50vh; 
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     
     #demo-container {

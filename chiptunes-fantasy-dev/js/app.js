@@ -51,8 +51,8 @@ function initApp() {
         initVisuals(); 
         initScroller(); 
         
+        // System initialisieren, aber KEINEN Track automatisch starten!
         setTheme('theme-c64');
-        selectAndPlayTrack(0, 'c64'); 
     });
 }
 
@@ -260,10 +260,18 @@ function setTheme(themeName) {
     const legend = document.getElementById('hud-legend');
     if (legend) legend.classList.add('hidden'); 
 
+    // NEU: HUD Body und [?] Button beim Systemwechsel sauber verstecken
+    const hudBody = document.getElementById('hud-body');
+    if (hudBody) hudBody.classList.add('hidden');
+    const hudToggleBtn = document.getElementById('btn-hud-toggle');
+    if (hudToggleBtn) hudToggleBtn.innerText = '[+]';
+    const infoBtn = document.getElementById('btn-hud-info');
+    if (infoBtn) infoBtn.classList.add('hidden');
+
     trackData = [];
     currentTrackIndex = 0;
+    currentChipRegs = null;
     
-    // NEU: Dropdown mit den passenden Cores für das System füllen!
     renderCoreSelector(activeSystem);
 }
 
@@ -393,6 +401,26 @@ document.getElementById('btn-hud-info').addEventListener('click', () => {
     const legend = document.getElementById('hud-legend');
     legend.innerHTML = chipCheatSheets[activeSystem]; 
     legend.classList.toggle('hidden');
+});
+
+// --- Toggle für das gesamte DSP HUD ---
+document.getElementById('btn-hud-toggle').addEventListener('click', (e) => {
+    const body = document.getElementById('hud-body');
+    const infoBtn = document.getElementById('btn-hud-info'); // Den [?] Button holen
+    const isHidden = body.classList.contains('hidden');
+    
+    if (isHidden) {
+        body.classList.remove('hidden');
+        infoBtn.classList.remove('hidden'); // [?] Button EINBLENDEN
+        e.target.innerText = '[-]'; 
+    } else {
+        body.classList.add('hidden');
+        infoBtn.classList.add('hidden'); // [?] Button AUSBLENDEN
+        e.target.innerText = '[+]'; 
+        
+        const legend = document.getElementById('hud-legend');
+        if (legend) legend.classList.add('hidden');
+    }
 });
 
 // --- EMU CORE WECHSEL (Dropdown) ---
@@ -710,7 +738,7 @@ function initVisuals() {
 let audioPunch = Math.abs(currentOscValue) * 40; 
         // NEU: Der Airbag! Falls der Audiochip crasht (NaN), retten wir das Canvas!
         if (isNaN(audioPunch) || !isFinite(audioPunch)) audioPunch = 0;
-        
+
         const isAmiga = document.body.classList.contains('theme-amiga');
         const isAtari = document.body.classList.contains('theme-atari');
         

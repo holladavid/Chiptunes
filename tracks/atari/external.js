@@ -15,7 +15,10 @@ const myYmFiles = [
     'Dragonflight_unspec.YM',
     'EnchantedLands_Intro.YM',
     'UnionDemo_Level_16_Fullscreen.YM',
-    'UnionDemo_Mega_Apocalypse.YM'
+    'UnionDemo_Mega_Apocalypse.YM',
+    'UnionDemo_ThatsTheWayItIs.YM',
+    'UnionDemo_NinjaRemix.YM',
+    'SyntaxTerror.YM'
 ];
 
 // Wir generieren mit .map() automatisch für jeden Namen einen fertigen Track-Eintrag!
