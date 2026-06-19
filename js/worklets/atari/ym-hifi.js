@@ -1,5 +1,5 @@
 // =========================================================
-// YM2149F "HI-FI REIMAGINED" CORE (Modern Pop / Studio Edition)
+// YM2149F "HI-FI REIMAGINED" CORE (Analog Mastering Edition)
 // =========================================================
 
 const YM_DAC = [
@@ -24,9 +24,13 @@ class YMHifiProcessor extends AudioWorkletProcessor {
         this.delayMask = 131071;
         this.delayIdx = 0;
         this.delayTime = 0; 
-        this.delayFilterL = 0; this.delayFilterR = 0; 
+        
+        this.delayLpL = 0; this.delayLpR = 0; 
+        this.delayHpL = 0; this.delayHpR = 0;
         
         this.sidechainEnv = 1.0; 
+        this.lastOutL = 0; this.lastInL = 0; 
+        this.lastOutR = 0; this.lastInR = 0; 
 
         this.digidrums = [];
         this.currentDigidrum = null;
@@ -56,7 +60,7 @@ class YMHifiProcessor extends AudioWorkletProcessor {
     }
 
     applyFilter(input, ch, cutoffHz, resonance) {
-        if (cutoffHz > 12000) cutoffHz = 12000; 
+        if (cutoffHz > 16000) cutoffHz = 16000; 
         let q = 1.0 - resonance;
         let f = 2.0 * Math.sin(Math.PI * cutoffHz / sampleRate);
         if (f > 1.9 - q) f = 1.9 - q; 
@@ -64,6 +68,7 @@ class YMHifiProcessor extends AudioWorkletProcessor {
         this.fLow[ch] += f * this.fBand[ch];
         let high = input - this.fLow[ch] - q * this.fBand[ch];
         this.fBand[ch] += f * high;
+        
         if (isNaN(this.fLow[ch])) { this.fLow[ch] = 0; this.fBand[ch] = 0; }
         return this.fLow[ch]; 
     }
@@ -76,11 +81,7 @@ class YMHifiProcessor extends AudioWorkletProcessor {
         if (this.delayTime === 0) this.delayTime = Math.floor(sampleRate * 0.375);
 
         for (let i = 0; i < outL.length; i++) {
-            
-            if (!this.isPlaying) {
-                outL[i] = 0; if (outR) outR[i] = 0;
-                continue; 
-            }
+            if (!this.isPlaying) { outL[i] = 0; if (outR) outR[i] = 0; continue; }
 
             if (this.isPlaying && this.trackData) {
                 this.sampleCounter--;
@@ -97,16 +98,25 @@ class YMHifiProcessor extends AudioWorkletProcessor {
                     let activeDigiTrigger = 0;
                     if (frame[15] > 0) activeDigiTrigger = frame[15];
                     else if (frame[14] > 0) activeDigiTrigger = frame[14];
+
                     let fx1Voice = (frame[1] & 0x30) >> 4;
                     if (fx1Voice > 0) activeDigiTrigger = (frame[8 + fx1Voice - 1] & 0x1F) + 1;
                     let fx2Voice = (frame[3] & 0x30) >> 4;
                     if (fx2Voice > 0) activeDigiTrigger = (frame[8 + fx2Voice - 1] & 0x1F) + 1;
 
+                    if (activeDigiTrigger === 0) {
+                        let fx1Type = (frame[1] & 0xC0) >> 6;
+                        if (fx1Type === 0 && fx1Voice > 0) activeDigiTrigger = (frame[8 + fx1Voice - 1] & 0x1F) + 1;
+                        let fx2Type = (frame[3] & 0xC0) >> 6;
+                        if (fx2Type === 0 && fx2Voice > 0) activeDigiTrigger = (frame[8 + fx2Voice - 1] & 0x1F) + 1;
+                    }
+
                     if (activeDigiTrigger > 0 && activeDigiTrigger !== this.lastDigiTrigger) {
                         if (this.digidrums[activeDigiTrigger - 1]) {
                             this.currentDigidrum = this.digidrums[activeDigiTrigger - 1];
                             this.digiPos = 0;
-                            this.sidechainEnv = 0.4; 
+                            // Kick drückt die Synths etwas weg für den EDM Vibe, aber nicht zu stark
+                            this.sidechainEnv = 0.5; 
                             this.port.postMessage({ type: 'DEBUG', msg: 'Drum ' + activeDigiTrigger });
                         }
                     }
@@ -115,7 +125,7 @@ class YMHifiProcessor extends AudioWorkletProcessor {
                 }
             }
 
-            this.sidechainEnv += (1.0 - this.sidechainEnv) * 0.002;
+            this.sidechainEnv += (1.0 - this.sidechainEnv) * 0.003;
 
             let pA = ((this.regs[1] & 0x0F) << 8) | this.regs[0];
             let pB = ((this.regs[3] & 0x0F) << 8) | this.regs[2];
@@ -128,24 +138,20 @@ class YMHifiProcessor extends AudioWorkletProcessor {
             this.phaseA = (this.phaseA + incA) % 1.0;
             this.phaseB = (this.phaseB + incB) % 1.0;
             this.phaseC = (this.phaseC + incC) % 1.0;
-            this.lfoPhase = (this.lfoPhase + 1.5 / sampleRate) % 1.0; 
+            this.lfoPhase = (this.lfoPhase + 2.0 / sampleRate) % 1.0; 
             
             const mix = this.regs[7];
             let tA = (mix & 0x01) === 0; let tB = (mix & 0x02) === 0; let tC = (mix & 0x04) === 0;
             let nA = (mix & 0x08) === 0; let nB = (mix & 0x10) === 0; let nC = (mix & 0x20) === 0;
 
             // =========================================================
-            // CHANNELS BALANCED: Jeder Kanal hat nun identische Power!
-            // Ein Mix aus dynamischer PWM und knarzigem Sägezahn.
-            // Die Phasen des LFOs sind versetzt (0, 0.33, 0.66) für extrem breiten Stereo-Chorus.
+            // UNIFIED OSCILLATOR DESIGN (Absolute Gleichberechtigung!)
+            // Jeder Kanal ist nun ein fetter Mix aus Rechteck (Punch) und Sägezahn (Fülle).
+            // So klingt die Melodie auf Kanal A exakt so laut und präsent wie auf Kanal C.
             // =========================================================
-            let lfoA = Math.sin(this.lfoPhase * 2.0 * Math.PI) * 0.25 + 0.5;
-            let lfoB = Math.sin((this.lfoPhase + 0.33) * 2.0 * Math.PI) * 0.25 + 0.5;
-            let lfoC = Math.sin((this.lfoPhase + 0.66) * 2.0 * Math.PI) * 0.25 + 0.5;
-
-            let oscA = (this.phaseA > lfoA ? 0.7 : -0.7) + ((this.phaseA * 2.0 - 1.0) * 0.3);
-            let oscB = (this.phaseB > lfoB ? 0.7 : -0.7) + ((this.phaseB * 2.0 - 1.0) * 0.3);
-            let oscC = (this.phaseC > lfoC ? 0.7 : -0.7) + ((this.phaseC * 2.0 - 1.0) * 0.3);
+            let oscA = (this.phaseA < 0.5 ? 1.0 : -1.0) * 0.6 + ((this.phaseA * 2.0 - 1.0) * 0.4);
+            let oscB = (this.phaseB < 0.5 ? 1.0 : -1.0) * 0.6 + ((this.phaseB * 2.0 - 1.0) * 0.4);
+            let oscC = (this.phaseC < 0.5 ? 1.0 : -1.0) * 0.6 + ((this.phaseC * 2.0 - 1.0) * 0.4);
 
             let sigA = tA ? oscA : 0.0;
             let sigB = tB ? oscB : 0.0;
@@ -160,7 +166,7 @@ class YMHifiProcessor extends AudioWorkletProcessor {
                 this.nLow += fN * this.nBand;
                 let nHigh = rawNoise - this.nLow - 0.5 * this.nBand;
                 this.nBand += fN * nHigh;
-                noiseVal = nHigh * 1.0; 
+                noiseVal = nHigh * 0.8; 
             }
 
             if (nA) sigA += noiseVal;
@@ -185,10 +191,18 @@ class YMHifiProcessor extends AudioWorkletProcessor {
             let volB_raw = (this.regs[9] & 0x10) ? envVolIndex : (this.regs[9] & 0x0F);
             let volC_raw = (this.regs[10] & 0x10) ? envVolIndex : (this.regs[10] & 0x0F);
 
-            // FILTER BALANCED: Alle Kanäle haben nun exakt dieselbe Brillanz (12 kHz Max Cutoff)!
-            sigA = this.applyFilter(sigA, 0, 200 + (volA_raw/15) * 11800, 0.3);
-            sigB = this.applyFilter(sigB, 1, 200 + (volB_raw/15) * 11800, 0.3);
-            sigC = this.applyFilter(sigC, 2, 200 + (volC_raw/15) * 11800, 0.3);
+            // =========================================================
+            // ATTACK PUNCH UPDATE!
+            // x^1.2 sorgt dafür, dass das Filter beim Start fast komplett offen ist (schneller Attack),
+            // aber beim Ausklingen weich schließt. Resonanz (0.35) gibt den extra "Click".
+            // =========================================================
+            let sweepA = Math.pow(volA_raw / 15.0, 1.2);
+            let sweepB = Math.pow(volB_raw / 15.0, 1.2);
+            let sweepC = Math.pow(volC_raw / 15.0, 1.2);
+
+            sigA = this.applyFilter(sigA, 0, 150 + sweepA * 14000, 0.35); 
+            sigB = this.applyFilter(sigB, 1, 150 + sweepB * 14000, 0.35); 
+            sigC = this.applyFilter(sigC, 2, 150 + sweepC * 14000, 0.35); 
 
             let volA = YM_DAC[volA_raw];
             let volB = YM_DAC[volB_raw];
@@ -203,34 +217,55 @@ class YMHifiProcessor extends AudioWorkletProcessor {
                 } else this.currentDigidrum = null; 
             }
 
-            let synthA = sigA * volA * this.sidechainEnv * 0.8;
-            let synthB = sigB * volB * this.sidechainEnv * 0.8;
-            let synthC = sigC * volC * this.sidechainEnv * 0.8;
+            // =========================================================
+            // EQUAL POWER PANNING MIX
+            // Die akustische Gesamtenergie bleibt für jeden Kanal absolut gleich!
+            // =========================================================
+            let synthA = sigA * volA * this.sidechainEnv;
+            let synthB = sigB * volB * this.sidechainEnv;
+            let synthC = sigC * volC * this.sidechainEnv;
             
-            // PANNING BALANCED: Jeder Synth ist im Mix gleich stark vertreten!
-            let mixL = (synthA * 0.75) + (synthB * 0.5) + (synthC * 0.25) + (digiSample * 0.5);
-            let mixR = (synthA * 0.25) + (synthB * 0.5) + (synthC * 0.75) + (digiSample * 0.5);
+            // A = Center (0.75 L / 0.75 R)
+            // B = Hart Links (0.95 L / 0.35 R)
+            // C = Hart Rechts (0.35 L / 0.95 R)
+            let mixL = (synthA * 0.75) + (synthB * 0.95) + (synthC * 0.35) + (digiSample * 0.65);
+            let mixR = (synthA * 0.75) + (synthB * 0.35) + (synthC * 0.95) + (digiSample * 0.65);
 
+            // --- BBD TAPE DELAY ---
             let readIdxL = (this.delayIdx - this.delayTime + 131072) & this.delayMask;
             let readIdxR = (this.delayIdx - this.delayTime + 131072 + Math.floor(this.delayTime/2)) & this.delayMask;
             
-            this.delayFilterL += 0.5 * (this.delayBufL[readIdxL] - this.delayFilterL);
-            this.delayFilterR += 0.5 * (this.delayBufR[readIdxR] - this.delayFilterR);
+            let rawEchoL = this.delayBufL[readIdxL];
+            let rawEchoR = this.delayBufR[readIdxR];
+
+            this.delayLpL += 0.4 * (rawEchoL - this.delayLpL); 
+            this.delayHpL += 0.1 * (this.delayLpL - this.delayHpL); 
+            let tapeEchoL = this.delayLpL - this.delayHpL; 
+
+            this.delayLpR += 0.4 * (rawEchoR - this.delayLpR);
+            this.delayHpR += 0.1 * (this.delayLpR - this.delayHpR);
+            let tapeEchoR = this.delayLpR - this.delayHpR;
 
             let delayFeedback = 0.25; 
-            let finalL = mixL + this.delayFilterL * delayFeedback;
-            let finalR = mixR + this.delayFilterR * delayFeedback;
+            let finalL = mixL + tapeEchoL * delayFeedback;
+            let finalR = mixR + tapeEchoR * delayFeedback;
 
-            this.delayBufL[this.delayIdx] = mixR + this.delayFilterL * 0.15;
-            this.delayBufR[this.delayIdx] = mixL + this.delayFilterR * 0.15;
+            this.delayBufL[this.delayIdx] = mixR + tapeEchoL * 0.15;
+            this.delayBufR[this.delayIdx] = mixL + tapeEchoR * 0.15;
             this.delayIdx = (this.delayIdx + 1) & this.delayMask;
 
-            finalL = Math.tanh(finalL * 0.85);
-            finalR = Math.tanh(finalR * 0.85);
+            finalL = Math.tanh(finalL);
+            finalR = Math.tanh(finalR);
 
-            outL[i] = finalL;
-            if (outR) outR[i] = finalR;
-            if (i === 0) currentVisualValue = (finalL + finalR) / 2.0;
+            let dcBlockL = finalL - this.lastInL + 0.995 * this.lastOutL;
+            this.lastInL = finalL; this.lastOutL = dcBlockL;
+            
+            let dcBlockR = finalR - this.lastInR + 0.995 * this.lastOutR;
+            this.lastInR = finalR; this.lastOutR = dcBlockR;
+
+            outL[i] = dcBlockL;
+            if (outR) outR[i] = dcBlockR;
+            if (i === 0) currentVisualValue = (dcBlockL + dcBlockR) / 2.0;
         }
 
         this.visCounter = (this.visCounter || 0) + 1;
