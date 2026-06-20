@@ -14,11 +14,27 @@ const myYmFiles = [
     "Dragonflight_City_3.YM",
     'Dragonflight_unspec.YM',
     'EnchantedLands_Intro.YM',
+    'Giana_Title.YM',
+    'Giana_InGame1.YM',
+    'Giana_InGame2.YM',
+    'Giana_InGame3.YM',
+    'Giana_Bonus.YM',
+    'Giana_Highscore.YM',
+    'C64_Convertion_Shades_Giana.YM',
     'UnionDemo_Level_16_Fullscreen.YM',
     'UnionDemo_Mega_Apocalypse.YM',
     'UnionDemo_ThatsTheWayItIs.YM',
     'UnionDemo_NinjaRemix.YM',
-    'SyntaxTerror.YM'
+    'UnionDemo_Thundercats.YM',
+    'UnionDemo_ChildrenSongs.YM',
+    'UnionDemo_Pandora.YM',
+    'UndionDemo_ThinkTwice.YM',
+    'UnionDemo_ProBMX.YM',
+    'UnionDemo_AlloyRun.YM',
+    'UnionDemo_Cybernoid.YM',
+    'SyntaxTerror.YM',
+    'SyntaxTerror_tex.YM',
+    'SyntaxTerror_tlb.YM'
 ];
 
 // Wir generieren mit .map() automatisch für jeden Namen einen fertigen Track-Eintrag!
