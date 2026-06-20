@@ -335,18 +335,24 @@ async function selectAndPlayTrack(index, system) {
                 techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> None. 100% pure synthesized chip magic.</p>`;
             }
 
-            document.getElementById('info-text').innerHTML = `
-                <div style="margin-bottom: 20px;">
-                    <h2 style="color: var(--highlight-color);">> NOW PLAYING:</h2>
-                    <p style="font-size: 1.2em; border-bottom: 1px solid currentColor; padding-bottom: 5px;">${selectedSong.title}</p>
-                </div>
-                
-                <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.3); border: 1px dashed var(--highlight-color);">
+            // NEU: Tracker-Design (border-left statt dashed border!)
+            let dynamicHTML = `
+                <div style="margin-top: 15px; padding: 10px 15px; background: rgba(0,0,0,0.2); border-left: 4px solid var(--highlight-color); position: relative;">
                     <p style="color: var(--highlight-color); margin-bottom: 8px;"><strong>[ BINARY FILE ANALYSIS ]</strong></p>
                     ${techInfo}
                 </div>
+            `;
+
+            // Museum füllen (Rahmenlinien gelöscht!)
+            document.getElementById('info-text').innerHTML = `
+                <div style="margin-bottom: 20px;">
+                    <h2 style="color: var(--highlight-color);">> NOW PLAYING:</h2>
+                    <p style="font-size: 1.2em; padding-top: 5px;">${selectedSong.title}</p>
+                </div>
                 
-                <div style="margin-top: 30px; border-top: 2px dashed var(--text-color); padding-top: 15px;">
+                ${dynamicHTML}
+                
+                <div style="margin-top: 30px; padding-top: 15px;">
                     ${systemDescriptions[system]}
                 </div>
                 <p class="blinking-cursor" style="margin-top: 15px;">_</p>
@@ -357,14 +363,15 @@ async function selectAndPlayTrack(index, system) {
             currentScrollerText = "+++ ERROR LOADING FILE +++";
         }
     } else {
+        // Der alte Weg (Generatoren) - Auch hier die Rahmenlinien entfernt!
         document.getElementById('info-text').innerHTML = `
             <div style="margin-bottom: 20px;">
                 <h2 style="color: var(--highlight-color);">> NOW PLAYING:</h2>
-                <p style="font-size: 1.2em; border-bottom: 1px solid currentColor; padding-bottom: 5px;">${selectedSong.title}</p>
+                <p style="font-size: 1.2em; padding-top: 5px;">${selectedSong.title}</p>
             </div>
             ${selectedSong.composerInfo}
             
-            <div style="margin-top: 30px; border-top: 2px dashed var(--text-color); padding-top: 15px;">
+            <div style="margin-top: 30px; padding-top: 15px;">
                 ${systemDescriptions[system]}
             </div>
             <p class="blinking-cursor" style="margin-top: 15px;">_</p>
@@ -691,9 +698,8 @@ function updateChipHUD() {
             shapeStr = `[0x${s.toString(16).toUpperCase()}] ` + shapeStr;
         }
         document.getElementById('env-shape-val').innerText = shapeStr;
-        document.getElementById('digi-g-val').innerText = r[15] > 0 ? `SMP #${r[15]}` : '--';
 
-} else {
+    } else {
         // C64 / AMIGA Fallback (Ausfallsicher!)
         for (let i = 0; i < currentChipRegs.length; i++) {
             if (!hudValElements[i]) continue; // Sicherheit: Verhindert Absturz beim schnellen Wechsel!

@@ -3,23 +3,22 @@
 // ==========================================
 
 export const systemDescriptions = {
-    c64: `
-        <div style="border: 1px solid var(--text-color); padding: 10px; margin-bottom: 15px; background: rgba(0,0,0,0.2);">
-            <h3 style="color: var(--highlight-color); margin-bottom: 5px;">[ CHIP-SPECS: MOS SID 6581 ]</h3>
-            <p>Ein echter, analoger subtraktiver Synthesizer auf einem Silizium-Chip. Besitzt 3 Oszillatoren, Hardware-ADSR-Hüllkurven und ein legendäres, rein analoges Multimode-Filter.</p>
+c64: `
+        <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2);">
+            <h3 style="color: var(--highlight-color); margin-bottom: 5px;">[ CHIP-SPECS: MOS SID 6581 ]</h3>            <p>Ein echter, analoger subtraktiver Synthesizer auf einem Silizium-Chip. Besitzt 3 Oszillatoren, Hardware-ADSR-Hüllkurven und ein legendäres, rein analoges Multimode-Filter.</p>
             <p style="margin-top: 8px;"><strong>🔥 Szene-Hack (PWM):</strong> Da der C64 nur 3 Stimmen hat, modulierten Coder die Pulsweite der Rechteckwelle (PWM) in rasender Geschwindigkeit, um wabernde, extrem "dicke" Bässe zu erzeugen, die klingen, als liefen mehrere Oszillatoren gleichzeitig.</p>
         </div>
     `,
     amiga: `
-        <div style="border: 1px solid var(--text-color); padding: 10px; margin-bottom: 15px; background: rgba(0,0,0,0.2);">
+        <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2);">
             <h3 style="color: var(--highlight-color); margin-bottom: 5px;">[ CHIP-SPECS: MOS PAULA 8364 ]</h3>
             <p>Paula revolutionierte den Sound durch Direct Memory Access (DMA). Anstatt Töne zu generieren, liest Paula 4 eigenständige 8-Bit PCM-Samples direkt aus dem RAM und pitcht sie in Hardware stufenlos hoch und runter.</p>
             <p style="margin-top: 8px;"><strong>🔥 Szene-Hack (Software-Mixing):</strong> Um das starre Hard-Panning (1&4 links, 2&3 rechts) und das 4-Kanal-Limit zu überwinden, mischten geniale Programmierer (wie Chris Hülsbeck) per CPU mehrere Samples zusammen, um 7-stimmige Polyphonie zu erreichen.</p>
         </div>
     `,
     atari: `
-        <div style="border: 1px solid var(--text-color); padding: 15px; margin-bottom: 15px; background: rgba(0,0,0,0.3); line-height: 1.6;">
-            <h3 style="color: var(--highlight-color); margin-bottom: 15px; border-bottom: 1px dashed var(--text-color); padding-bottom: 5px;">[ DEEP DIVE: YM2149F ARCHITEKTUR ]</h3>
+        <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2); line-height: 1.6;">
+            <h3 style="color: var(--highlight-color); margin-bottom: 15px;">[ DEEP DIVE: YM2149F ARCHITEKTUR ]</h3>
             <p>Der Yamaha YM2149 (im Atari ST mit 2 MHz getaktet) ist ein puristischer Rechteck-Synthesizer. Er hat keine analogen Filter, aber eine geniale, rohe digitale Architektur. Hier erfährst du, was die Live-Werte im DSP-Analyzer (oben rechts) bedeuten:</p>
 
             <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DIE OSZILLATOREN (CH A, B, C)</h4>
