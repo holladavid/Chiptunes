@@ -19,7 +19,7 @@ let currentTrackIndex = 0;
 let currentScrollerText = "+++ INITIALIZING DEMO ENGINE... +++";
 let lastKnownFrame = 0; 
 let previousFrame = 0;       // NEU: Merkt sich den vorherigen Frame für den Loop-Check
-let isAutoAdvancing = false; // NEU: Verhindert doppeltes Auslösen beim Trackwechsel
+let lastTrackChangeTime = 0; // NEU: Der kugelsichere Cooldown-Timer
 let isEcoMode = false;      // NEU: Status für den Pure Audio Mode
 
 // --- YM2149 NOISE FREQUENCY LOOKUP TABLE (2 MHz Clock) ---
@@ -120,10 +120,9 @@ async function loadEmuCore(system, coreConfig) {
                 lastKnownFrame = e.data.frame || 0; 
                 currentChipRegs = e.data.regs; 
 
-                // AUTO-ADVANCE (Jukebox Modus)
-                if (isPlaying && trackData.length > 0 && !isAutoAdvancing) {
+                // 2. AUTO-ADVANCE (Playlist Jukebox Modus)
+                if (isPlaying && trackData.length > 0) {
                     if (previousFrame > trackData.length - 20 && lastKnownFrame < 10) {
-                        isAutoAdvancing = true; 
                         // NEU: Der 2-Sekunden Cooldown! (Verhindert die Endlosschleife und den Safari-Absturz)
                         if (performance.now() - lastTrackChangeTime > 2000) {
                             lastTrackChangeTime = performance.now(); // Sofort sperren!
