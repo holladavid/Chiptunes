@@ -297,24 +297,22 @@ function setTheme(themeName) {
     renderCoreSelector(activeSystem);
 }
 
-// NEU: Baut die Dropdown-Liste inkl. ASCII-CPU-Meter!
+// Baut die Dropdown-Liste inkl. ASCII-CPU-Meter am Ende!
 function renderCoreSelector(system) {
     const select = document.getElementById('core-selector');
     select.innerHTML = '';
-    
     workletRegistry[system].forEach((core, index) => {
         const opt = document.createElement('option');
         opt.value = index;
         
-        // Demoscene Magic: Wir generieren einen Unicode-Balken (1 bis 4 Segmente)
         let cpuLoad = core.cpu || 1;
         let meter = '';
         for (let i = 1; i <= 4; i++) {
             meter += (i <= cpuLoad) ? '■' : '□';
         }
         
-        // Das Ergebnis sieht dann z.B. so aus: [CPU:■■■□] YM2149 (Hi-Fi Remaster)
-        opt.text = `[CPU:${meter}] ${core.name}`;
+        // NEU: Name zuerst, dann die CPU-Last am Ende
+        opt.text = `${core.name}  [CPU:${meter}]`;
         
         select.appendChild(opt);
     });
@@ -457,15 +455,35 @@ document.getElementById('btn-prev').addEventListener('click', () => {
     selectAndPlayTrack(prevIdx, activeSystem);
 });
 
+// Globale Variable für den Wake Lock Sensor
+let wakeLock = null;
+
 // --- PURE AUDIO / ECO MODE TOGGLE ---
-document.getElementById('btn-eco').addEventListener('click', () => {
+document.getElementById('btn-eco').addEventListener('click', async () => {
     isEcoMode = true;
     document.getElementById('eco-overlay').classList.remove('hidden');
+    
+    // NEU: Wake Lock beim Browser anfordern!
+    try {
+        if ('wakeLock' in navigator) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log('[SYSTEM] Wake Lock aktiv. Bildschirm bleibt an.');
+        }
+    } catch (err) {
+        console.warn(`Wake Lock Fehler: ${err.name}, ${err.message}`);
+    }
 });
 
-document.getElementById('btn-eco-off').addEventListener('click', () => {
+document.getElementById('btn-eco-off').addEventListener('click', async () => {
     isEcoMode = false;
     document.getElementById('eco-overlay').classList.add('hidden');
+    
+    // NEU: Wake Lock wieder freigeben, Gerät darf wieder schlafen!
+    if (wakeLock !== null) {
+        await wakeLock.release();
+        wakeLock = null;
+        console.log('[SYSTEM] Wake Lock freigegeben.');
+    }
 });
 
 document.getElementById('volume-slider').addEventListener('input', (e) => {
