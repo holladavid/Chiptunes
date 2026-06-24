@@ -603,25 +603,61 @@ document.getElementById('volume-slider').addEventListener('input', (e) => {
     if (masterGain) masterGain.gain.value = e.target.value;
 });
 
-// --- FULLSCREEN TOGGLE LOGIK (Mit Safari/Webkit Support) ---
+// --- FULLSCREEN TOGGLE LOGIK (Mit nativem & iOS-Pseudo-Support) ---
 function toggleFullscreen() {
     const visualZone = document.getElementById('visual-zone');
     
-    // Standard-Prüfung und Webkit/Safari-Ausnahme
-    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        if (visualZone.requestFullscreen) {
-            visualZone.requestFullscreen();
-        } else if (visualZone.webkitRequestFullscreen) {
-            visualZone.webkitRequestFullscreen(); // Safari/iOS Fallback
+    // Prüfen, ob das Gerät native Fullscreen-API für Divs unterstützt (z.B. Desktop & iPad)
+    const hasNativeSupport = !!(visualZone.requestFullscreen || visualZone.webkitRequestFullscreen);
+    
+    if (hasNativeSupport) {
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            if (visualZone.requestFullscreen) {
+                visualZone.requestFullscreen();
+            } else if (visualZone.webkitRequestFullscreen) {
+                visualZone.webkitRequestFullscreen();
+            }
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            }
         }
     } else {
-        if (document.exitFullscreen) {
-            document.exitFullscreen();
-        } else if (document.webkitExitFullscreen) {
-            document.webkitExitFullscreen(); // Safari/iOS Fallback
+        // iOS / iPhone Pseudo-Fullscreen Fallback
+        const isPseudo = visualZone.classList.toggle('pseudo-fullscreen');
+        const btn = document.getElementById('btn-fullscreen');
+        
+        if (isPseudo) {
+            btn.innerText = '[ EXIT ]';
+        } else {
+            btn.innerText = '[ ⛶ ]';
         }
+        
+        // Triggere manuell ein Resize-Event, damit das Canvas sich sofort anpasst
+        window.dispatchEvent(new Event('resize'));
     }
 }
+
+// Beobachtet native Fullscreen-Zustandsänderungen zur Synchronisation des Button-Textes
+function handleFullscreenChange() {
+    const btn = document.getElementById('btn-fullscreen');
+    const isNativeFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    
+    if (isNativeFS) {
+        btn.innerText = '[ EXIT ]';
+    } else {
+        btn.innerText = '[ ⛶ ]';
+    }
+    // Canvas im VBLANK neu berechnen
+    window.dispatchEvent(new Event('resize'));
+}
+
+// Event-Kopplung
+document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Safari-Kopplung
 
 // Event-Kopplung
 document.getElementById('btn-fullscreen').addEventListener('click', () => {

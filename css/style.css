@@ -662,7 +662,15 @@ body, html {
     width: 100% !important;
     height: 100% !important;
 }
-
+/* Pseudo-Fullscreen Fallback für iOS / iPhone */
+#visual-zone.pseudo-fullscreen {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    z-index: 9999 !important; /* Liegt über allen anderen UI-Elementen */
+}
 /* =========================================
    8. MOBILE RESPONSIVE DESIGN (Smartphones)
    ========================================= */
