@@ -724,7 +724,9 @@ function updateChipHUD() {
     let regCount = activeSystem === 'c64' ? 29 : (activeSystem === 'amiga' ? 28 : 16);
 
     // 1. DOM IMMER sofort neu aufbauen, wenn sich das System ändert (auch wenn die Musik stoppt!)
-    if (cachedSystem !== activeSystem || hudValElements.length !== regCount) {
+    // BUGFIX: Da das Atari-Grid "hudValElements" nicht befüllt, hat der Längen-Check hier zu einem 
+    // endlosen innerHTML-Rebuild-Loop geführt, der die Sparkline-Canvases im VBLANK vernichtet hat.
+    if (cachedSystem !== activeSystem || (activeSystem !== 'atari' && hudValElements.length !== regCount)) {
         cachedSystem = activeSystem;
         
         if (activeSystem === 'atari') {
