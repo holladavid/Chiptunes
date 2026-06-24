@@ -114,3 +114,21 @@ export function detectDigidrum(frame) {
 
     return activeDigiTrigger;
 }
+
+/**
+ * Ermittelt, welcher YM-Kanal (1: Voice A, 2: Voice B, 3: Voice C, 0: Keiner) die Digidrum triggert.
+ * 
+ * @param {Uint8Array} frame - Das aktuelle 16-Byte Register-Frame
+ * @returns {number} 1-basierter Kanalindex (0 = kein Kanal oder Fallback)
+ */
+export function detectDigidrumVoice(frame) {
+    const fx1Type = (frame[1] & 0xC0) >> 6;
+    const fx1Voice = (frame[1] & 0x30) >> 4;
+    if (fx1Type === 1 && fx1Voice > 0) return fx1Voice;
+
+    const fx2Type = (frame[3] & 0xC0) >> 6;
+    const fx2Voice = (frame[3] & 0x30) >> 4;
+    if (fx2Type === 1 && fx2Voice > 0) return fx2Voice;
+
+    return 0; // Kein direkter Kanal gemappt (z. B. Fallback)
+}

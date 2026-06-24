@@ -1,4 +1,4 @@
-import { YM_DAC, polyBLEP, cubicInterpolate, FourPoleFilter, MoogFilter, DCBlocker, detectDigidrum } from '../lib/dsp-utils.js';
+import { YM_DAC, polyBLEP, cubicInterpolate, FourPoleFilter, MoogFilter, DCBlocker, detectDigidrum, detectDigidrumVoice } from '../lib/dsp-utils.js';
 import { DynamicStaging } from '../lib/dynamic-staging.js';
 
 class YMFantasyProcessor extends AudioWorkletProcessor {
@@ -40,6 +40,7 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
         this.sidechainEnv = 1.0; 
 
         this.digidrums = []; this.currentDigidrum = null; this.digiPos = 0; this.lastDigiTrigger = 0;
+        this.currentDrumVoice = 0; // Speichert den triggernden Kanal des aktuellen Samples
         this.trackData = null; this.currentFrame = 0; this.sampleCounter = 0; this.isPlaying = false;
         
         this.port.onmessage = (event) => {
@@ -77,6 +78,7 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                     
                     // Modularer Digidrum Catcher
                     let activeDigiTrigger = detectDigidrum(frame);
+                    let activeDigiVoice = detectDigidrumVoice(frame);
 
                     if (activeDigiTrigger > 0 && activeDigiTrigger !== this.lastDigiTrigger) {
                         if (this.digidrums[activeDigiTrigger - 1]) {
@@ -87,6 +89,12 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                         }
                     }
                     this.lastDigiTrigger = activeDigiTrigger;
+
+                    // Trigger-Kanal für die Dynamic-Staging-Schleife erfassen
+                    if (activeDigiTrigger > 0) {
+                        this.currentDrumVoice = activeDigiVoice;
+                    }
+
                     this.currentFrame = (this.currentFrame + 1) % this.trackData.length;
                 }
             }
@@ -117,8 +125,13 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let tA = (mix & 0x01) === 0; let tB = (mix & 0x02) === 0; let tC = (mix & 0x04) === 0;
             let nA = (mix & 0x08) === 0; let nB = (mix & 0x10) === 0; let nC = (mix & 0x20) === 0;
 
+            // Reset des Trigger-Kanals, sobald die Wiedergabe des Samples endet
+            if (!this.currentDigidrum) {
+                this.currentDrumVoice = 0;
+            }
+
             // --- EXTERNES DYNAMIC STAGING ---
-            let stage = this.stager.update(pA, pB, pC, nA, nB, nC);
+            let stage = this.stager.update(pA, pB, pC, nA, nB, nC, 0.002, this.currentDrumVoice);
 
             // Channel A: Square + Fundamental Sine + Sub-Oktav-Generator
             let sqA = (this.phaseA < 0.5 ? 1.0 : -1.0) + polyBLEP(this.phaseA, incA) - polyBLEP((this.phaseA + 0.5) % 1.0, incA);
@@ -204,9 +217,7 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let cutB = 250 + sweepB * (12000 - stage.B.sub * 10000);
             let cutC = 250 + sweepC * (12000 - stage.C.sub * 10000);
 
-            // --- OPTIMIERUNG: INTERNER FILTER-OVERDRIVE (Saturierte Kaskade) ---
-            // Wir übersteuern das Eingangssignal leicht in Abhängigkeit vom Lautstärke-Swell, 
-            // um warme klangliche Verzerrungen im FourPole-Kern zu simulieren.
+            // Filter Drive (Kaskaden-Sättigung)
             let driveA = 1.0 + sweepA * 0.4;
             let drivenA = Math.tanh(sigA * driveA) / driveA;
             sigA = this.filterA.process(drivenA, cutA, 0.45 - stage.A.sub*0.35, sampleRate);
@@ -227,7 +238,7 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let volB = this.smoothVoltB;
             let volC = this.smoothVoltC;
 
-            // --- OPTIMIERUNG: CUBIC PCM MIT HIGH-FREQUENCY EXCITER ---
+            // --- CUBIC PCM MIT HIGH-FREQUENCY EXCITER ---
             let digiSample = 0;
             if (this.currentDigidrum) {
                 let posInt = Math.floor(this.digiPos);
@@ -237,7 +248,6 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                         this.currentDigidrum[posInt - 1] || 0, this.currentDigidrum[posInt],
                         this.currentDigidrum[posInt + 1] || 0, this.currentDigidrum[posInt + 2] || 0, mu) * 0.8; 
                     
-                    // HF-Exciter: Generiert künstliche Obertöne über der Nyquist-Grenze des dumpfen Original-Samples
                     let hpExciter = this.drumHp.process(rawSample, 3500, 0.15, sampleRate);
                     let highHarmonics = Math.tanh(hpExciter * 3.5) * 0.28;
 
@@ -248,7 +258,7 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                 }
             }
 
-            // --- GAIN STAGING ---
+            // --- GAIN STAGING & DYNAMIC PANNING ---
             let lvlA_L = sigA * volA * this.sidechainEnv * 0.18;
             let lvlA_R = sigA * volA * this.sidechainEnv * 0.18;
             let lvlB_L = sigB_L * volB * this.sidechainEnv * 0.18;
@@ -256,12 +266,16 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let lvlC_L = sigC_L * volC * this.sidechainEnv * 0.18;
             let lvlC_R = sigC_R * volC * this.sidechainEnv * 0.18;
 
+            // Dynamisches Drum-Staging anwenden
+            let lvlD = digiSample * stage.drums.gain;
+
             let epL_A = Math.cos(stage.A.pan * Math.PI * 0.5); let epR_A = Math.sin(stage.A.pan * Math.PI * 0.5);
             let epL_B = Math.cos(stage.B.pan * Math.PI * 0.5); let epR_B = Math.sin(stage.B.pan * Math.PI * 0.5);
             let epL_C = Math.cos(stage.C.pan * Math.PI * 0.5); let epR_C = Math.sin(stage.C.pan * Math.PI * 0.5);
+            let epL_D = Math.cos(stage.drums.pan * Math.PI * 0.5); let epR_D = Math.sin(stage.drums.pan * Math.PI * 0.5);
 
-            let mixL = (lvlA_L * epL_A) + (lvlB_L * epL_B) + (lvlC_L * epL_C) + (digiSample * 0.5);
-            let mixR = (lvlA_R * epR_A) + (lvlB_R * epR_B) + (lvlC_R * epR_C) + (digiSample * 0.5);
+            let mixL = (lvlA_L * epL_A) + (lvlB_L * epL_B) + (lvlC_L * epL_C) + (lvlD * epL_D);
+            let mixR = (lvlA_R * epR_A) + (lvlB_R * epR_B) + (lvlC_R * epR_C) + (lvlD * epR_D);
 
             let readIdxL = (this.delayIdx - tap1 + 65536) % 65536;
             let readIdxR = (this.delayIdx - tap2 + 65536) % 65536;
@@ -279,8 +293,12 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let finalL = mixL + this.delayLpL * 0.6; 
             let finalR = mixR + this.delayLpR * 0.6;
 
-            this.delayBufL[this.delayIdx] = mixR * 0.4 + this.delayLpL * 0.5;
-            this.delayBufR[this.delayIdx] = mixL * 0.4 + this.delayLpR * 0.5;
+            // Reverb-Mischmatrix für alle Quellen (einschließlich Drums)
+            let revL = (lvlA_L * epL_A * stage.A.rev) + (lvlB_L * epL_B * stage.B.rev) + (lvlC_L * epL_C * stage.C.rev) + (lvlD * epL_D * stage.drums.rev);
+            let revR = (lvlA_R * epR_A * stage.A.rev) + (lvlB_R * epR_B * stage.B.rev) + (lvlC_R * epR_C * stage.C.rev) + (lvlD * epR_D * stage.drums.rev);
+
+            this.delayBufL[this.delayIdx] = revR * 0.4 + this.delayLpL * 0.5;
+            this.delayBufR[this.delayIdx] = revL * 0.4 + this.delayLpR * 0.5;
             this.delayIdx = (this.delayIdx + 1) % 65536;
 
             finalL = (Math.tanh(finalL * 2.8) / 1.1) * 0.95;

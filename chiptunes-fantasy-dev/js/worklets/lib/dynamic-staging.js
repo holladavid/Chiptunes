@@ -8,12 +8,13 @@ export class DynamicStaging {
         this.state = {
             A: { pan: 0.5, sub: 0.0, rev: 0.2 },
             B: { pan: 0.5, sub: 0.0, rev: 0.2 },
-            C: { pan: 0.5, sub: 0.0, rev: 0.2 }
+            C: { pan: 0.5, sub: 0.0, rev: 0.2 },
+            drums: { pan: 0.5, gain: 0.18, rev: 0.2 } // Dedizierter Drum-Mischkanal
         };
     }
 
     // speed = 0.002 (Standard), kann für BladeRunner angepasst werden
-    update(pA, pB, pC, nA, nB, nC, speed = 0.002) {
+    update(pA, pB, pC, nA, nB, nC, speed = 0.002, drumVoice = 0) {
         let tPanA = 0.2; let tSubA = 0.0; let tRevA = 0.3;
         let tPanB = 0.8; let tSubB = 0.0; let tRevB = 0.6; 
         let tPanC = 0.5; let tSubC = 0.0; let tRevC = 0.3;
@@ -40,6 +41,27 @@ export class DynamicStaging {
         this.state.C.pan += (tPanC - this.state.C.pan) * speed; 
         this.state.C.sub += (tSubC - this.state.C.sub) * speed; 
         this.state.C.rev += (tRevC - this.state.C.rev) * speed;
+
+        // --- DYNAMISCHE DRUM-STAGING STEUERUNG ---
+        let tDrumPan = 0.5;
+        let tDrumGain = 0.18; // Pegelanpassung an die Oszillatoren-Stufe
+        let tDrumRev = 0.2;
+
+        if (drumVoice === 1) { // Auf Kanal A getriggert
+            tDrumPan = this.state.A.pan;
+            tDrumRev = this.state.A.rev * 0.5; // Dämpfe den Bass-Hall leicht ab
+        } else if (drumVoice === 2) { // Auf Kanal B getriggert
+            tDrumPan = this.state.B.pan;
+            tDrumRev = this.state.B.rev * 0.5;
+        } else if (drumVoice === 3) { // Auf Kanal C getriggert
+            tDrumPan = this.state.C.pan;
+            tDrumRev = this.state.C.rev * 0.5;
+        }
+
+        // Schnelles Morphing für perkussive Übergänge
+        this.state.drums.pan += (tDrumPan - this.state.drums.pan) * 0.1;
+        this.state.drums.gain += (tDrumGain - this.state.drums.gain) * 0.05;
+        this.state.drums.rev += (tDrumRev - this.state.drums.rev) * 0.1;
 
         return this.state;
     }
