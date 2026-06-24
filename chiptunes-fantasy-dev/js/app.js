@@ -603,6 +603,31 @@ document.getElementById('volume-slider').addEventListener('input', (e) => {
     if (masterGain) masterGain.gain.value = e.target.value;
 });
 
+// --- FULLSCREEN TOGGLE LOGIK (Mit Safari/Webkit Support) ---
+function toggleFullscreen() {
+    const visualZone = document.getElementById('visual-zone');
+    
+    // Standard-Prüfung und Webkit/Safari-Ausnahme
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (visualZone.requestFullscreen) {
+            visualZone.requestFullscreen();
+        } else if (visualZone.webkitRequestFullscreen) {
+            visualZone.webkitRequestFullscreen(); // Safari/iOS Fallback
+        }
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen(); // Safari/iOS Fallback
+        }
+    }
+}
+
+// Event-Kopplung
+document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    toggleFullscreen();
+});
+
 document.getElementById('btn-hud-info').addEventListener('click', () => {
     const legend = document.getElementById('hud-legend');
     legend.innerHTML = chipCheatSheets[activeSystem]; 
@@ -925,13 +950,27 @@ function updateChipHUD() {
 function initVisuals() {
     const canvas = document.getElementById('demo-canvas');
     const ctx = canvas.getContext('2d', { alpha: false }); 
-    canvas.width = canvas.clientWidth; 
-    canvas.height = canvas.clientHeight;
     
-    const historyLength = canvas.width; 
-    // NEU: Mit NaN füllen, damit anfangs absolute Leere herrscht!
-    const oscHistory = new Float32Array(historyLength).fill(NaN);
-    let oscIndex = 0; 
+    // Dynamischer Puffer-Speicher für das Oszilloskop
+    let historyLength = canvas.width;
+    let oscHistory = new Float32Array(historyLength).fill(NaN);
+    let oscIndex = 0;
+
+    // BUGFIX: Passt das Canvas und den Oszilloskop-Puffer bei Größenänderungen an!
+    function resizeCanvas() {
+        canvas.width = canvas.clientWidth; 
+        canvas.height = canvas.clientHeight;
+        
+        // Puffer an die neue physikalische Breite angleichen
+        historyLength = canvas.width;
+        oscHistory = new Float32Array(historyLength).fill(NaN);
+        oscIndex = 0; // Zeiger resetten
+    }
+    
+    // Initiales Setup und Resize-Event-Kopplung
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
     let startTime = performance.now();
     let hudCounter = 0; 
 
@@ -982,8 +1021,6 @@ function initVisuals() {
         ctx.globalCompositeOperation = "source-over";
 
         // --- 3. DAS OSZILLOSKOP ---
-        // NEU: Wenn kein Track geladen ist, pumpen wir "Nichts" (NaN) ins Array. 
-        // Dadurch scrollt eine alte Linie beim Systemwechsel wunderschön aus dem Bild!
         oscHistory[oscIndex] = (trackData.length === 0) ? NaN : currentOscValue;
         oscIndex = (oscIndex + 1) % historyLength; 
         
@@ -995,7 +1032,6 @@ function initVisuals() {
             let actualIndex = (oscIndex + x) % historyLength; 
             let val = oscHistory[actualIndex];
             
-            // NEU: Nur zeichnen, wenn ein echter Audio-Wert vorliegt!
             if (!isNaN(val)) {
                 let y = (canvas.height / 2) - (val * (canvas.height * 0.4)); 
                 if (isFirstPoint) {
@@ -1007,7 +1043,6 @@ function initVisuals() {
             }
         }
         
-        // Nur den Glow und die Linie zeichnen, wenn es Punkte gab
         if (!isFirstPoint) {
             ctx.lineWidth = 6; ctx.globalAlpha = 0.3; ctx.stroke();
             ctx.lineWidth = 2; ctx.globalAlpha = 1.0; ctx.stroke();

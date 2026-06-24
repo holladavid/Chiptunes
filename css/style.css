@@ -629,8 +629,40 @@ body, html {
 }
 
 /* =========================================
-   8. MOBILE RESPONSIVE DESIGN (Smartphones)
-   ========================================= */
+   FULLSCREEN BUTTON & OVERRIDES
+========================================= */
+#btn-fullscreen {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    z-index: 12; /* Liegt über dem Canvas, aber unter dem HUD */
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--text-color);
+    color: var(--highlight-color);
+    padding: 6px 12px;
+    font-family: var(--font-main);
+    font-size: 10px; /* Winziges, crisp-nerdiges Font-Scale */
+    cursor: pointer;
+    transition: all 0.1s;
+    outline: none;
+}
+
+#btn-fullscreen:hover {
+    background: var(--text-color);
+    color: #000;
+    border-color: var(--highlight-color);
+}
+
+/* Erzwingt, dass die Visualisierungs-Zone im Vollbildmodus den ganzen Screen füllt */
+#visual-zone:fullscreen {
+    width: 100% !important;
+    height: 100% !important;
+}
+#visual-zone:-webkit-full-screen {
+    width: 100% !important;
+    height: 100% !important;
+}
+
 /* =========================================
    8. MOBILE RESPONSIVE DESIGN (Smartphones)
    ========================================= */
