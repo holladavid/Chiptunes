@@ -1,7 +1,7 @@
 // --- IMPORT DER MODULE ---
 import { trackRegistry } from '../tracks/registry.js';
-import { createKickSample, createBassSample, createChordSample } from './utils/amiga-helper.js'; 
-import { systemDescriptions, chipCheatSheets } from './content/museum.js';
+import { createKickSample, createBassSample, createChordSample, createSnareSample, createLeadSample } from './utils/amiga-helper.js'; 
+import { systemDescriptions, chipCheatSheets } from './content/museum.js'; // <- DIESER IMPORT MUSS INTACT SEIN!
 import { workletRegistry } from './worklets/registry.js';
 
 // --- GLOBALE VARIABLEN ---
@@ -186,6 +186,8 @@ function uploadAmigaSamples() {
         paulaNode.port.postMessage({ type: 'UPLOAD_SAMPLE', name: 'kick', data: createKickSample() });
         paulaNode.port.postMessage({ type: 'UPLOAD_SAMPLE', name: 'bass', data: createBassSample() });
         paulaNode.port.postMessage({ type: 'UPLOAD_SAMPLE', name: 'chord', data: createChordSample() });
+        paulaNode.port.postMessage({ type: 'UPLOAD_SAMPLE', name: 'snare', data: createSnareSample() }); // NEU
+        paulaNode.port.postMessage({ type: 'UPLOAD_SAMPLE', name: 'lead', data: createLeadSample() });   // NEU
     }
 }
 
@@ -394,42 +396,62 @@ async function selectAndPlayTrack(index, system) {
 
     const songs = trackRegistry[system];
     if (!songs || !songs[index]) {
-        return; // Die alte isAutoAdvancing Sperre wurde hier restlos gelöscht!
+        return; 
     }
 
     stopPlayback();
     currentTrackIndex = index;
     const selectedSong = songs[index];
     
+    // Frame-Zähler hart resetten, um Geister-Loops zu verhindern
     lastKnownFrame = 0;
     previousFrame = 0; 
     
     // Regler für das Scrubbing freigeben
     document.getElementById('progress-slider').disabled = false;
     
-    renderTracklist(system);
+    renderTracklist(system); 
 
     if (selectedSong.loadAsync) {
-        currentScrollerText = "+++ DOWNLOADING AND PARSING BINARY YM FILE... +++";
+        const isAmigaFile = selectedSong.title.toLowerCase().includes("hipc") || selectedSong.title.toLowerCase().includes("amiga");
+        currentScrollerText = isAmigaFile 
+            ? "+++ DOWNLOADING AND PARSING BINARY AMIGA HIPEL-COSO FILE... +++"
+            : "+++ DOWNLOADING AND PARSING BINARY YM FILE... +++";
+        
         try {
             let parsedFile = await selectedSong.loadAsync();
             trackData = parsedFile.frames; 
             trackData.digidrums = parsedFile.digidrums;
-            trackData.isYmFile = true;
+            
+            if (isAmigaFile) {
+                trackData.isHipcFile = true;
+            } else {
+                trackData.isYmFile = true;
+            }
             
             let meta = parsedFile.metadata;
             
-            currentScrollerText = `+++ BOOM! SUCCESSFULLY CRACKED OPEN BINARY FILE +++ NOW PLAYING: ${meta.name.toUpperCase()} BY ${meta.author.toUpperCase()} +++ COMMENT ALONG THE RIDE: ${meta.comment.toUpperCase() || "NO COMMENT"} +++ CRANK UP THE GAIN AND LET THE YM2149 MELT YOUR SPEAKERS +++ `;
+            currentScrollerText = isAmigaFile
+                ? `+++ BOOM! SUCCESSFULLY DECODED AMIGA HIPEL-COSO FILE +++ NOW PLAYING: ${meta.name.toUpperCase()} BY ${meta.author.toUpperCase()} +++ FORMAT: ${meta.type} +++ COMPOSER: JOCHEN HIPPEL +++ `
+                : `+++ BOOM! SUCCESSFULLY CRACKED OPEN BINARY FILE +++ NOW PLAYING: ${meta.name.toUpperCase()} BY ${meta.author.toUpperCase()} +++ COMMENT ALONG THE RIDE: ${meta.comment.toUpperCase() || "NO COMMENT"} +++ CRANK UP THE GAIN AND LET THE YM2149 MELT YOUR SPEAKERS +++ `;
 
-            let techInfo = `<p><strong>File Signature:</strong> ${meta.type} (De-interleaved)</p>`;
-            techInfo += `<p><strong>Length:</strong> ${trackData.length} Frames @ 50Hz VBLANK</p>`;
-            
-            if (meta.digidrumCount > 0) {
-                techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> ${meta.digidrumCount} Digidrum(s) detected!</p>`;
-                let sizes = meta.digidrumSizes.map(s => s.toLocaleString('de-DE') + ' Bytes').join(' / ');
-                techInfo += `<p style="font-size: 0.9em; margin-left: 10px; color: var(--text-color); opacity: 0.8;">> Sample sizes: [ ${sizes} ]</p>`;
+            let techInfo = "";
+            if (isAmigaFile) {
+                techInfo += `<p><strong>File Signature:</strong> ${meta.type}</p>`;
+                techInfo += `<p><strong>Size in Memory:</strong> ${meta.fileSize.toLocaleString('de-DE')} Bytes</p>`;
+                techInfo += `<p><strong>Structure:</strong> ${meta.patternCount} Patterns, ${meta.instrumentCount} Synthesized Amiga Instruments</p>`;
+                techInfo += `<p><strong>Paula Configuration:</strong> 4 Channels, Direct DMA emulation</p>`;
             } else {
-                techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> None. 100% pure synthesized chip magic.</p>`;
+                techInfo = `<p><strong>File Signature:</strong> ${meta.type} (De-interleaved)</p>`;
+                techInfo += `<p><strong>Length:</strong> ${trackData.length} Frames @ 50Hz VBLANK</p>`;
+                
+                if (meta.digidrumCount > 0) {
+                    techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> ${meta.digidrumCount} Digidrum(s) detected!</p>`;
+                    let sizes = meta.digidrumSizes.map(s => s.toLocaleString('de-DE') + ' Bytes').join(' / ');
+                    techInfo += `<p style="font-size: 0.9em; margin-left: 10px; color: var(--text-color); opacity: 0.8;">> Sample sizes: [ ${sizes} ]</p>`;
+                } else {
+                    techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> None. 100% pure synthesized chip magic.</p>`;
+                }
             }
 
             // Tracker-Design (border-left statt dashed border!)
@@ -439,6 +461,11 @@ async function selectAndPlayTrack(index, system) {
                     ${techInfo}
                 </div>
             `;
+
+            // ROBUSTE ABSICHERUNG: Fallback falls der Import durch Scoping-Probleme blockiert ist
+            const systemText = (typeof systemDescriptions !== 'undefined' && systemDescriptions[system]) 
+                ? systemDescriptions[system] 
+                : '<p style="color: var(--text-color);">[ Museumdatenarchiv geladen, Beschreibung temporär nicht verfügbar ]</p>';
 
             // Museum füllen (Rahmenlinien gelöscht!)
             document.getElementById('info-text').innerHTML = `
@@ -450,20 +477,22 @@ async function selectAndPlayTrack(index, system) {
                 ${dynamicHTML}
                 
                 <div style="margin-top: 30px; padding-top: 15px;">
-                    ${systemDescriptions[system]}
+                    ${systemText}
                 </div>
                 <p class="blinking-cursor" style="margin-top: 15px;">_</p>
             `;
             startPlayback();
-            // Die alte isAutoAdvancing Sperre wurde hier restlos gelöscht!
             
         } catch (err) {
             alert("FEHLER BEIM LADEN: " + err.message);
             currentScrollerText = "+++ ERROR LOADING FILE +++";
-            // Die alte isAutoAdvancing Sperre wurde hier restlos gelöscht!
         }
     } else {
         // Der alte Weg (Generatoren)
+        const systemText = (typeof systemDescriptions !== 'undefined' && systemDescriptions[system]) 
+            ? systemDescriptions[system] 
+            : '<p style="color: var(--text-color);">[ Museumdatenarchiv geladen ]</p>';
+
         document.getElementById('info-text').innerHTML = `
             <div style="margin-bottom: 20px;">
                 <h2 style="color: var(--highlight-color);">> NOW PLAYING:</h2>
@@ -472,14 +501,13 @@ async function selectAndPlayTrack(index, system) {
             ${selectedSong.composerInfo}
             
             <div style="margin-top: 30px; padding-top: 15px;">
-                ${systemDescriptions[system]}
+                ${systemText}
             </div>
             <p class="blinking-cursor" style="margin-top: 15px;">_</p>
         `;
         currentScrollerText = "+++ NOW PLAYING: " + selectedSong.title + " +++";
         trackData = selectedSong.generator();
         startPlayback();
-        // Die alte isAutoAdvancing Sperre wurde hier restlos gelöscht!
     }
 }
 
