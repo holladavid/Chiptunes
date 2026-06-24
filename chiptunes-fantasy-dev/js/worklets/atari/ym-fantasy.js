@@ -7,6 +7,10 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
         this.clock = 2000000; 
         this.regs = new Uint8Array(16); 
         this.phaseA = 0; this.phaseB1 = 0; this.phaseB2 = 0; this.phaseC = 0;
+        
+        // Sub-Oszillator Phasen (genau eine Oktave unter der Grundwelle f/2)
+        this.subPhaseA = 0; this.subPhaseB = 0; this.subPhaseC = 0;
+
         this.lfoPhase1 = 0.0; 
         this.noiseLfsr = 1; this.noisePhase = 0; this.noiseOutput = 1;
         this.envPhase = 0.0;
@@ -20,6 +24,9 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
         
         this.noiseHp = new MoogFilter(); 
         this.noiseLp1 = new MoogFilter(); this.noiseLp2 = new MoogFilter(); 
+        
+        // Highpass-Filter für den HF-Exciter des Digidrum-Kanals
+        this.drumHp = new MoogFilter();
         
         this.dcBlockL = new DCBlocker();
         this.dcBlockR = new DCBlocker();
@@ -98,6 +105,12 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             this.phaseB1 = (this.phaseB1 + incB) % 1.0;
             this.phaseB2 = (this.phaseB2 + incB * 1.003) % 1.0; 
             this.phaseC = (this.phaseC + incC) % 1.0;
+            
+            // Sub-Phasen-Inkrementierung (genau halbe Frequenz für ein fettes Bassfundament)
+            this.subPhaseA = (this.subPhaseA + incA * 0.5) % 1.0;
+            this.subPhaseB = (this.subPhaseB + incB * 0.5) % 1.0;
+            this.subPhaseC = (this.subPhaseC + incC * 0.5) % 1.0;
+
             this.lfoPhase1 = (this.lfoPhase1 + 1.8 / sampleRate) % 1.0; 
 
             const mix = this.regs[7];
@@ -107,22 +120,29 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             // --- EXTERNES DYNAMIC STAGING ---
             let stage = this.stager.update(pA, pB, pC, nA, nB, nC);
 
+            // Channel A: Square + Fundamental Sine + Sub-Oktav-Generator
             let sqA = (this.phaseA < 0.5 ? 1.0 : -1.0) + polyBLEP(this.phaseA, incA) - polyBLEP((this.phaseA + 0.5) % 1.0, incA);
             let sFundA = Math.sin(this.phaseA * 2.0 * Math.PI); 
-            let sigA = tA ? (sqA * (1.0 - stage.A.sub*0.4) + sFundA * stage.A.sub * 1.2) : 0.0; 
+            let sSubA = Math.sin(this.subPhaseA * 2.0 * Math.PI);
+            let sigA = tA ? (sqA * (1.0 - stage.A.sub*0.4) + sFundA * stage.A.sub * 1.0 + sSubA * stage.A.sub * 0.7) : 0.0; 
 
+            // Channel B: Detuned Dual-Sawtooth + Sub-Oktav-Generator (Supersaw)
             let sawB1 = ((this.phaseB1 * 2.0) - 1.0) - polyBLEP(this.phaseB1, incB);
             let sawB2 = ((this.phaseB2 * 2.0) - 1.0) - polyBLEP(this.phaseB2, incB * 1.003);
             let sFundB = Math.sin(this.phaseB1 * 2.0 * Math.PI);
-            let sigB_L = tB ? (sawB1 * (1.0 - stage.B.sub*0.4) + sFundB * stage.B.sub * 1.2) : 0.0;
-            let sigB_R = tB ? (sawB2 * (1.0 - stage.B.sub*0.4) + sFundB * stage.B.sub * 1.2) : 0.0;
+            let sSubB = Math.sin(this.subPhaseB * 2.0 * Math.PI);
+            let sigB_L = tB ? (sawB1 * (1.0 - stage.B.sub*0.4) + sFundB * stage.B.sub * 1.0 + sSubB * stage.B.sub * 0.7) : 0.0;
+            let sigB_R = tB ? (sawB2 * (1.0 - stage.B.sub*0.4) + sFundB * stage.B.sub * 1.0 + sSubB * stage.B.sub * 0.7) : 0.0;
 
+            // Channel C: PWM-Wellen + Sub-Oktav-Generator
             let pwmWidth = Math.sin(this.lfoPhase1 * 2.0 * Math.PI) * 0.3 + 0.5;
             let pwmC = (this.phaseC < pwmWidth ? 1.0 : -1.0) + polyBLEP(this.phaseC, incC) - polyBLEP((this.phaseC + pwmWidth) % 1.0, incC);
             let sFundC = Math.sin(this.phaseC * 2.0 * Math.PI);
-            let sigC_L = tC ? (pwmC * (1.0 - stage.C.sub*0.4) + sFundC * stage.C.sub * 1.2) : 0.0;
+            let sSubC = Math.sin(this.subPhaseC * 2.0 * Math.PI);
+            let sigC_L = tC ? (pwmC * (1.0 - stage.C.sub*0.4) + sFundC * stage.C.sub * 1.0 + sSubC * stage.C.sub * 0.7) : 0.0;
             let sigC_R = sigC_L;
 
+            // Rausch-Generierung
             this.noisePhase += (2000000 / (16 * ((this.regs[6] & 0x1F) === 0 ? 1 : (this.regs[6] & 0x1F)))) / sampleRate;
             if (this.noisePhase >= 1.0) {
                 this.noisePhase %= 1.0;
@@ -184,29 +204,44 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let cutB = 250 + sweepB * (12000 - stage.B.sub * 10000);
             let cutC = 250 + sweepC * (12000 - stage.C.sub * 10000);
 
-            // Filter Processing via externem Module!
-            sigA = this.filterA.process(sigA, cutA, 0.45 - stage.A.sub*0.35, sampleRate);
-            sigB_L = this.filterB_L.process(sigB_L, cutB, 0.45 - stage.B.sub*0.35, sampleRate);
-            sigB_R = this.filterB_R.process(sigB_R, cutB+50, 0.45 - stage.B.sub*0.35, sampleRate);
-            sigC_L = this.filterC_L.process(sigC_L, cutC, 0.45 - stage.C.sub*0.35, sampleRate);
-            sigC_R = this.filterC_R.process(sigC_R, cutC+50, 0.45 - stage.C.sub*0.35, sampleRate);
+            // --- OPTIMIERUNG: INTERNER FILTER-OVERDRIVE (Saturierte Kaskade) ---
+            // Wir übersteuern das Eingangssignal leicht in Abhängigkeit vom Lautstärke-Swell, 
+            // um warme klangliche Verzerrungen im FourPole-Kern zu simulieren.
+            let driveA = 1.0 + sweepA * 0.4;
+            let drivenA = Math.tanh(sigA * driveA) / driveA;
+            sigA = this.filterA.process(drivenA, cutA, 0.45 - stage.A.sub*0.35, sampleRate);
+
+            let driveB = 1.0 + sweepB * 0.4;
+            let drivenB_L = Math.tanh(sigB_L * driveB) / driveB;
+            let drivenB_R = Math.tanh(sigB_R * driveB) / driveB;
+            sigB_L = this.filterB_L.process(drivenB_L, cutB, 0.45 - stage.B.sub*0.35, sampleRate);
+            sigB_R = this.filterB_R.process(drivenB_R, cutB+50, 0.45 - stage.B.sub*0.35, sampleRate);
+
+            let driveC = 1.0 + sweepC * 0.4;
+            let drivenC_L = Math.tanh(sigC_L * driveC) / driveC;
+            let drivenC_R = Math.tanh(sigC_R * driveC) / driveC;
+            sigC_L = this.filterC_L.process(drivenC_L, cutC, 0.45 - stage.C.sub*0.35, sampleRate);
+            sigC_R = this.filterC_R.process(drivenC_R, cutC+50, 0.45 - stage.C.sub*0.35, sampleRate);
 
             let volA = this.smoothVoltA;
             let volB = this.smoothVoltB;
             let volC = this.smoothVoltC;
 
-            // --- CUBIC PCM ---
+            // --- OPTIMIERUNG: CUBIC PCM MIT HIGH-FREQUENCY EXCITER ---
             let digiSample = 0;
             if (this.currentDigidrum) {
                 let posInt = Math.floor(this.digiPos);
                 if (posInt >= 0 && posInt < this.currentDigidrum.length - 2) {
                     let mu = this.digiPos - posInt;
-                    let y0 = posInt > 0 ? this.currentDigidrum[posInt - 1] : 0;
-                    let y1 = this.currentDigidrum[posInt];
-                    let y2 = this.currentDigidrum[posInt + 1];
-                    let y3 = this.currentDigidrum[posInt + 2];
+                    let rawSample = cubicInterpolate(
+                        this.currentDigidrum[posInt - 1] || 0, this.currentDigidrum[posInt],
+                        this.currentDigidrum[posInt + 1] || 0, this.currentDigidrum[posInt + 2] || 0, mu) * 0.8; 
+                    
+                    // HF-Exciter: Generiert künstliche Obertöne über der Nyquist-Grenze des dumpfen Original-Samples
+                    let hpExciter = this.drumHp.process(rawSample, 3500, 0.15, sampleRate);
+                    let highHarmonics = Math.tanh(hpExciter * 3.5) * 0.28;
 
-                    digiSample = cubicInterpolate(y0, y1, y2, y3, mu) * 0.8; 
+                    digiSample = rawSample + highHarmonics;
                     this.digiPos += 7812.5 / sampleRate; 
                 } else {
                     this.currentDigidrum = null; 
