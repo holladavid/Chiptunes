@@ -607,8 +607,12 @@ document.getElementById('volume-slider').addEventListener('input', (e) => {
 function toggleFullscreen() {
     const visualZone = document.getElementById('visual-zone');
     
-    // Prüfen, ob das Gerät native Fullscreen-API für Divs unterstützt (z.B. Desktop & iPad)
-    const hasNativeSupport = !!(visualZone.requestFullscreen || visualZone.webkitRequestFullscreen);
+    // BUGFIX: Kugel- und Safari-sichere iOS-Erkennung (iPhone, iPad, iPod incl. iPadOS 13+ Safari)
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    
+    // Native API-Prüfung (Wird für iOS-Geräte nun erzwungen umgangen, da Apple die Ausführung blockiert)
+    const hasNativeSupport = !isIOS && !!(visualZone.requestFullscreen || visualZone.webkitRequestFullscreen);
     
     if (hasNativeSupport) {
         if (!document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -625,7 +629,7 @@ function toggleFullscreen() {
             }
         }
     } else {
-        // iOS / iPhone Pseudo-Fullscreen Fallback
+        // iOS / iPhone & iPad Safari Pseudo-Fullscreen Fallback!
         const isPseudo = visualZone.classList.toggle('pseudo-fullscreen');
         const btn = document.getElementById('btn-fullscreen');
         
@@ -658,7 +662,6 @@ function handleFullscreenChange() {
 document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
 document.addEventListener('fullscreenchange', handleFullscreenChange);
 document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Safari-Kopplung
-
 // Event-Kopplung
 document.getElementById('btn-fullscreen').addEventListener('click', () => {
     toggleFullscreen();
