@@ -1,5 +1,6 @@
 // =========================================================
 // MOS TECHNOLOGY SID 6581 AUDIO WORKLET PROCESSOR
+// Dynamic CIA Speed & IRQ Controller
 // =========================================================
 
 import { CPU6502 } from '../lib/cpu6502.js';
@@ -19,6 +20,8 @@ class SIDProcessor extends AudioWorkletProcessor {
         
         this.initAddress = 0;
         this.playAddress = 0;
+        this.useCiaTimer = false; 
+        this.isIrqRoutine = false; // BUGFIX: Steuert den RTS/RTI Call-Type!
 
         this.port.onmessage = (e) => {
             const msg = e.data;
@@ -27,18 +30,25 @@ class SIDProcessor extends AudioWorkletProcessor {
                 this.initAddress = msg.initAddress;
                 this.playAddress = msg.playAddress;
                 
-                this.cpu.a = (msg.startSong > 0 ? msg.startSong - 1 : 0) & 0xFF;
-                this.cpu.x = this.cpu.a; 
+                let songIndex = (msg.startSong > 0 ? msg.startSong - 1 : 0) & 0xFF;
+                this.cpu.a = songIndex;
+                this.cpu.x = songIndex; 
                 this.cpu.y = 0;
                 this.cpu.p &= ~1;
                 
-                // Nutze neuen Wrapper für sicheres RTI/RTS handling!
-                this.cpu.play(this.initAddress);
+                this.useCiaTimer = ((msg.speed >> songIndex) & 1) !== 0;
+
+                this.cpu.jsr(this.initAddress);
                 
+                this.isIrqRoutine = false;
+
                 if (this.playAddress === 0) {
                     this.playAddress = this.cpu.read(0x0314) | (this.cpu.read(0x0315) << 8); 
                     if (this.playAddress === 0 || this.playAddress === 0xFFFF) {
                         this.playAddress = this.cpu.read(0xFFFE) | (this.cpu.read(0xFFFF) << 8);
+                        if (this.playAddress !== 0 && this.playAddress !== 0xFFFF) {
+                            this.isIrqRoutine = true; // Hardware IRQ Vektor, benötigt RTI!
+                        }
                     }
                     if (this.playAddress === 0 || this.playAddress === 0xFFFF) {
                         this.playAddress = this.initAddress + 3; 
@@ -48,8 +58,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                 this.currentFrame = 0;
                 this.sampleCounter = 0;
                 this.isPlaying = true;
-                
-                console.log(`[6502 CPU] Loaded at $${msg.loadAddress.toString(16)}. Play: $${this.playAddress.toString(16)}`);
             } else if (msg.type === 'STOP_TRACK') {
                 this.isPlaying = false;
             } else if (msg.type === 'RESUME_TRACK') {
@@ -74,10 +82,23 @@ class SIDProcessor extends AudioWorkletProcessor {
             if (this.isPlaying && this.playAddress > 0) {
                 this.sampleCounter--;
                 if (this.sampleCounter <= 0) {
-                    this.sampleCounter += sampleRate / 50.0;
+                    
+                    let hz = 50.0; 
+                    if (this.useCiaTimer && this.cpu.ciaTimerA > 0) {
+                        hz = this.clock / this.cpu.ciaTimerA;
+                        if (hz < 10) hz = 10;
+                        if (hz > 1000) hz = 1000;
+                    }
+                    this.sampleCounter += sampleRate / hz;
                     
                     this.cpu.write(0xD019, 0x81);
-                    this.cpu.play(this.playAddress); // Nutze Wrapper für IRQ Player
+                    
+                    if (this.isIrqRoutine) {
+                        this.cpu.irq(this.playAddress);
+                    } else {
+                        this.cpu.jsr(this.playAddress);
+                    }
+                    
                     this.currentFrame = (this.currentFrame + 1) % 5000;
                 }
             }
@@ -88,9 +109,16 @@ class SIDProcessor extends AudioWorkletProcessor {
                 
                 if (this.sid.regs[23] & (1 << v)) {
                     let f = 2.0 * Math.sin(Math.PI * this.sid.cutoff / sampleRate);
+                    if (f > 1.0) f = 1.0; 
+                    
                     this.sid.filterLow += f * this.sid.filterBand;
                     let high = voiceOut - this.sid.filterLow - (1.0 - this.sid.resonance * 0.9) * this.sid.filterBand;
                     this.sid.filterBand += f * high;
+                    
+                    if (this.sid.filterBand > 3.0) this.sid.filterBand = 3.0;
+                    if (this.sid.filterBand < -3.0) this.sid.filterBand = -3.0;
+                    if (this.sid.filterLow > 3.0) this.sid.filterLow = 3.0;
+                    if (this.sid.filterLow < -3.0) this.sid.filterLow = -3.0;
                     
                     let filterOut = 0;
                     if (this.sid.filterMode & 16) filterOut += this.sid.filterLow; 

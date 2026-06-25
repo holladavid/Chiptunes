@@ -21,6 +21,7 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.initAddress = 0;
         this.playAddress = 0;
         this.useCiaTimer = false; 
+        this.isIrqRoutine = false; // BUGFIX: Steuert den RTS/RTI Call-Type!
 
         this.port.onmessage = (e) => {
             const msg = e.data;
@@ -33,15 +34,21 @@ class SIDProcessor extends AudioWorkletProcessor {
                 this.cpu.a = songIndex;
                 this.cpu.x = songIndex; 
                 this.cpu.y = 0;
+                this.cpu.p &= ~1;
                 
                 this.useCiaTimer = ((msg.speed >> songIndex) & 1) !== 0;
 
-                this.cpu.jsr(this.initAddress); // SICHERER JSR-WRAPPER FÜR INIT
+                this.cpu.jsr(this.initAddress);
                 
+                this.isIrqRoutine = false;
+
                 if (this.playAddress === 0) {
                     this.playAddress = this.cpu.read(0x0314) | (this.cpu.read(0x0315) << 8); 
                     if (this.playAddress === 0 || this.playAddress === 0xFFFF) {
                         this.playAddress = this.cpu.read(0xFFFE) | (this.cpu.read(0xFFFF) << 8);
+                        if (this.playAddress !== 0 && this.playAddress !== 0xFFFF) {
+                            this.isIrqRoutine = true; // Hardware IRQ Vektor, benötigt RTI!
+                        }
                     }
                     if (this.playAddress === 0 || this.playAddress === 0xFFFF) {
                         this.playAddress = this.initAddress + 3; 
@@ -86,9 +93,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                     
                     this.cpu.write(0xD019, 0x81);
                     
-                    // Hardware IRQ Wrapper (Push PCH, PCL, P) falls es RSID ist, sonst JSR
-                    // Die Routine entscheidet selbst ob sie mit RTS oder RTI endet!
-                    if (this.playAddress === (this.cpu.read(0xFFFE) | (this.cpu.read(0xFFFF) << 8))) {
+                    if (this.isIrqRoutine) {
                         this.cpu.irq(this.playAddress);
                     } else {
                         this.cpu.jsr(this.playAddress);
