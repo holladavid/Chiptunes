@@ -8,15 +8,19 @@
 const SID_SLDB = {
     // Commando (Rob Hubbard)
     "commando": {
-        lengths: [188, 10, 10] // Subsong 1 (Main Theme): 3:08 min (188 Sek)
+        lengths: [188, 10, 10] // Subsong 1: 3:08 min (188 Sek)
     },
     // Monty on the Run (Rob Hubbard)
     "montyontherun": {
-        lengths: [351, 146, 10] // Subsong 1: 5:51 min (351 Sek) | Subsong 2 (High Score): 2:26 min
+        lengths: [351, 146, 10] // Subsong 1: 5:51 min (351 Sek)
     },
     // Delta (Rob Hubbard)
     "delta": {
         lengths: [306, 10, 10] // Subsong 1: 5:06 min (306 Sek)
+    },
+    // Wizball (Martin Galway) - NEU!
+    "wizball": {
+        lengths: [625, 163, 10] // Subsong 1 (Main Title): 10:25 min (625 Sek) | Subsong 2: 2:43 min
     }
 };
 

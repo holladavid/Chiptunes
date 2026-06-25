@@ -4,9 +4,21 @@
 
 export const systemDescriptions = {
 c64: `
-        <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2);">
-            <h3 style="color: var(--highlight-color); margin-bottom: 5px;">[ CHIP-SPECS: MOS SID 6581 ]</h3>            <p>Ein echter, analoger subtraktiver Synthesizer auf einem Silizium-Chip. Besitzt 3 Oszillatoren, Hardware-ADSR-Hüllkurven und ein legendäres, rein analoges Multimode-Filter.</p>
-            <p style="margin-top: 8px;"><strong>🔥 Szene-Hack (PWM):</strong> Da der C64 nur 3 Stimmen hat, modulierten Coder die Pulsweite der Rechteckwelle (PWM) in rasender Geschwindigkeit, um wabernde, extrem "dicke" Bässe zu erzeugen, die klingen, als liefen mehrere Oszillatoren gleichzeitig.</p>
+        <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2); line-height: 1.6;">
+            <h3 style="color: var(--highlight-color); margin-bottom: 5px;">[ DEEP DIVE: MOS TECHNOLOGY SID 6581 ]</h3>
+            <p>Der Sound Interface Device (SID), 1981 von Bob Yannes entworfen, ist ein analoger subtraktiver Synthesizer auf einem einzigen Silizium-Chip. Er besitzt 3 Oszillatoren (Sägezahn, Dreieck, Rechteck, Rauschen), individuelle ADSR-Generatoren und ein analoges Multimode-Filter.</p>
+
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DER HUBBARD'SCHE RAUSCH-ZUFALLS-HACK ($D41B)</h4>
+            <p>Rob Hubbard (Komponist von <em>Commando</em> und <em>Delta</em>) stand vor dem Problem, dass der C64 keinen mathematischen Zufallsgenerator besitzt, um dynamische Snare-Drums und Hi-Hats zu berechnen. Seine geniale Lösung: Er schaltete Oszillator 3 auf Rauschen und las in seiner Play-Routine kontinuierlich das Hardware-Register <strong>$D41B (Voice 3 Waveform Output)</strong> aus. Die fluktuierenden Rohdaten nutzte er direkt als Hardware-Zufallszahlen für seine peitschenden Percussions!</p>
+
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DIE 3-STIMMEN-POLYPHONIE-FALLE (ARPEGGIOS)</h4>
+            <p>Da der SID nur über 3 Stimmen verfügt, mussten Musiker tricksen, um dreistimmige Akkorde plus Bass und Melodie abzubilden. Sie koppelten die Akkord-Noten (z. B. Grundton, kleine Terz, Quinte) in einer schnellen 50Hz-VBLANK-Routine auf einer einzigen Stimme. Durch das rasing schnelle Umschalten der Frequenz entsteht das berühmte "Flirren" (Arpeggio), das dem menschlichen Ohr einen echten, dreistimmigen Akkord vorgaukelt.</p>
+
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DER GALWAY VOLUME-ECHO-HACK ($D418)</h4>
+            <p>Martin Galway (Komponist von <em>Wizball</em>) fand heraus, dass man den SID zwingen kann, digitale Samples (PCM) abzuspielen, indem man das globale Lautstärkeregister <strong>$D418</strong> mit einer Frequenz von mehreren Kilohertz beschreibt. Dieser Hardware-Hack modulierte die DC-Spannung des Chips so schnell, dass ein hörbarer digitaler 4-Bit Soundstrom entstand.</p>
+
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DYNAMISCHE PULSWEITENMODULATION (PWM)</h4>
+            <p>Um dünne Synth-Klänge extrem "fett" und schwebend klingen zu lassen, modulierten Coder die Rechteckbreite (Pulse Width) über sinusförmige Software-LFOs. Das erzeugte ein sattes chorusschwebendes Klangbild, das klingt, als spielten mehrere Oszillatoren gleichzeitig.</p>
         </div>
     `,
    amiga: `
