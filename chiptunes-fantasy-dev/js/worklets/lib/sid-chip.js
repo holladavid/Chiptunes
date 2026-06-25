@@ -1,6 +1,6 @@
 // ==========================================
 // MOS Technology SID 6581 Sound Chip Emulation
-// Exact ADSR State Machine
+// Exact ADSR & Oscillator Output Readback
 // ==========================================
 
 const ADSR_RATES_S = [
@@ -14,9 +14,9 @@ export class SIDChip {
     constructor() {
         this.regs = new Uint8Array(29);
         this.voices = [
-            { freq: 0, pw: 2048, ctrl: 0, env: 0, phase: 0, state: ENV_RELEASE, prevGate: false },
-            { freq: 0, pw: 2048, ctrl: 0, env: 0, phase: 0, state: ENV_RELEASE, prevGate: false },
-            { freq: 0, pw: 2048, ctrl: 0, env: 0, phase: 0, state: ENV_RELEASE, prevGate: false }
+            { freq: 0, pw: 2048, ctrl: 0, env: 0, phase: 0, state: ENV_RELEASE, prevGate: false, waveOut8Bit: 0, env8Bit: 0 },
+            { freq: 0, pw: 2048, ctrl: 0, env: 0, phase: 0, state: ENV_RELEASE, prevGate: false, waveOut8Bit: 0, env8Bit: 0 },
+            { freq: 0, pw: 2048, ctrl: 0, env: 0, phase: 0, state: ENV_RELEASE, prevGate: false, waveOut8Bit: 0, env8Bit: 0 }
         ];
         this.lfsr = 0x7FFFF8; 
         this.cutoff = 30; this.resonance = 0; this.filterMode = 0; this.masterVol = 0;
@@ -32,15 +32,18 @@ export class SIDChip {
             let base = vIdx * 7;
             ch.freq = this.regs[base] | (this.regs[base+1] << 8);
             ch.pw = this.regs[base+2] | ((this.regs[base+3] & 15) << 8);
+            
+            let prevCtrl = ch.ctrl;
             ch.ctrl = this.regs[base+4];
             
             let gate = (ch.ctrl & 1) !== 0;
-            if (gate && !ch.prevGate) {
-                ch.state = ENV_ATTACK;
-            } else if (!gate && ch.prevGate) {
-                ch.state = ENV_RELEASE;
-            }
+            let prevGate = (prevCtrl & 1) !== 0;
+            
+            if (gate && !prevGate) ch.state = ENV_ATTACK;
+            else if (!gate && prevGate) ch.state = ENV_RELEASE;
             ch.prevGate = gate;
+
+            if (ch.ctrl & 8) ch.phase = 0; // Test Bit Phase Reset
             
         } else if (reg === 21 || reg === 22) {
             let cutoffReg = (this.regs[21] & 7) | (this.regs[22] << 3);
@@ -97,6 +100,10 @@ export class SIDChip {
         else if (ch.ctrl & 32) waveOut = (ch.phase * 2.0) - 1.0;
         else if (ch.ctrl & 64) waveOut = ch.phase > (ch.pw / 4095.0) ? 1.0 : -1.0;
         else if (ch.ctrl & 128) waveOut = this.getNoise();
+
+        // BUGFIX: 8-Bit Werte für CPU Readback Register ($D41B und $D41C) bereitstellen!
+        ch.waveOut8Bit = Math.floor(((waveOut + 1.0) / 2.0) * 255);
+        ch.env8Bit = Math.floor(ch.env * 255);
 
         return waveOut * ch.env;
     }
