@@ -1,7 +1,7 @@
 // === js/worklets/c64/sid-worklet.js ===
 // =========================================================
 // MOS TECHNOLOGY SID 6581 AUDIO WORKLET PROCESSOR
-// With Safe-Cloned Zero-Allocation Visualizer Pipeline
+// With Safe-Cloned Zero-Allocation View & Sub-Sample Phase Alignment
 // =========================================================
 
 import { CPU6502 } from '../lib/cpu6502.js';
@@ -106,6 +106,9 @@ class SIDProcessor extends AudioWorkletProcessor {
             if (this.isPlaying && this.playAddress > 0) {
                 this.sampleCounter--;
                 if (this.sampleCounter <= 0) {
+                    // === DETERMINISTISCHE SUB-SAMPLE PHASEN-KOMPENSATION ===
+                    const overshoot = -this.sampleCounter;
+
                     let hz = 50.0; 
                     
                     if (this.useCiaTimer && this.cpu.ciaTimerA > 0) {
@@ -123,6 +126,16 @@ class SIDProcessor extends AudioWorkletProcessor {
                         this.cpu.irq(this.playAddress);
                     } else {
                         this.cpu.jsr(this.playAddress);
+                    }
+
+                    // Die Phasen-Akkumulatoren des SIDs sub-sample-genau ausrichten!
+                    // Dies kompensiert Jitter, der entsteht, wenn die 6502-CPU einen Oszillator via Test-Bit resetet.
+                    for (let v = 0; v < 3; v++) {
+                        let ch = this.sid.voices[v];
+                        if (ch.freq > 0) {
+                            let phaseInc = ((ch.freq * this.clock) / 16777216.0) / sampleRate;
+                            ch.phase = (ch.phase + overshoot * phaseInc) % 1.0;
+                        }
                     }
                     
                     this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
@@ -163,7 +176,6 @@ class SIDProcessor extends AudioWorkletProcessor {
 
         this.visCounter = (this.visCounter || 0) + 1;
         if (this.visCounter % 4 === 0) {
-            // === NATIVE SPEICHERÜBERTRAGUNG (Absolut absturzsicher!) ===
             let isAudible = Math.abs(visualValue) > 0.001;
             if (isAudible || this.wasAudible) {
                 const view = this.visualView;
@@ -177,7 +189,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                     view[4 + r] = this.sid.regs[r];
                 }
 
-                // Senden ohne Transferables (Verhindert Detached-Buffer Fehler)
+                // Absolut stabiles Senden ohne Entwertung
                 this.port.postMessage(view);
             }
             this.wasAudible = isAudible;
