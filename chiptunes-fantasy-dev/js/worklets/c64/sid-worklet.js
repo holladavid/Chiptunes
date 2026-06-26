@@ -1,11 +1,12 @@
 // === js/worklets/c64/sid-worklet.js ===
 // =========================================================
 // MOS TECHNOLOGY SID 6581 AUDIO WORKLET PROCESSOR
-// With Analog Op-Amp Saturation, Filter Leakage & Static User-Controlled Temperature
+// High-Fidelity Cycle-Exact CPU Lockstep Mischer & Timer Engine
 // =========================================================
 
 import { CPU6502 } from '../lib/cpu6502.js';
 import { SIDChip } from '../lib/sid-chip.js';
+import { DCBlocker } from '../lib/dsp-utils.js';
 
 class SIDProcessor extends AudioWorkletProcessor {
     constructor() {
@@ -13,10 +14,14 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.clock = 985248; // PAL C64 Clock
         this.sid = new SIDChip();
         this.cpu = new CPU6502(this.sid);
+        this.dcBlock = new DCBlocker();
 
         this.trackData = null;
         this.isPlaying = false;
-        this.sampleCounter = 0;
+        
+        // Lockstep-Verteiler Variablen
+        this.cycleAccumulator = 0.0;
+        this.vblankCycles = 19705; // Standard-PAL-VBLANK (985248 / 50 Hz)
         this.currentFrame = 0;
         
         this.initAddress = 0;
@@ -24,16 +29,12 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.useCiaTimer = false; 
         this.isIrqRoutine = false; 
 
-        // Starttemperatur: Standard-Betriebstemperatur von 55°C (rein nutzergesteuert)
         this.temperature = 55.0;
-
-        // Visualizer Zero-Allocation Buffer (Safe Clone)
         this.visualView = new Float32Array(40);
 
         this.port.onmessage = (e) => {
             const msg = e.data;
             
-            // Manuelle Temperatureinstellung über den Regler
             if (msg.type === 'SET_TEMPERATURE') {
                 this.temperature = Math.min(75, Math.max(15, msg.value));
                 return;
@@ -51,9 +52,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                 this.cpu.p &= ~1;
                 
                 this.useCiaTimer = ((msg.speed >> songIndex) & 1) !== 0;
-
                 this.cpu.jsr(this.initAddress); 
-                
                 this.isIrqRoutine = false;
 
                 if (this.playAddress === 0) {
@@ -69,13 +68,17 @@ class SIDProcessor extends AudioWorkletProcessor {
                     }
                 }
 
+                // Initial-Reset der Mischer-Verteiler
+                this.temperature = 55.0;
+                this.cycleAccumulator = 0.0;
+                this.vblankCycles = 19705;
+                this.cpu.isIdle = true;
+
                 this.currentFrame = 0;
-                this.sampleCounter = 0;
-                
                 this.maxFrames = msg.length || 7500;
                 this.isPlaying = true;
                 
-                console.log(`[6502 CPU] Program loaded. Max frames: ${this.maxFrames} | CIA Mode: ${this.useCiaTimer}`);
+                console.log(`[6502 CPU] Cycle-Exact Lockstep ready. CIA: ${this.useCiaTimer}`);
             } else if (msg.type === 'STOP_TRACK') {
                 this.isPlaying = false;
             } else if (msg.type === 'RESUME_TRACK') {
@@ -94,8 +97,11 @@ class SIDProcessor extends AudioWorkletProcessor {
                 
                 this.cpu.jsr(this.initAddress);
                 
+                this.temperature = 55.0;
+                this.cycleAccumulator = 0.0;
+                this.vblankCycles = 19705;
+                this.cpu.isIdle = true;
                 this.currentFrame = 0;
-                this.sampleCounter = 0;
                 this.maxFrames = msg.length || 7500;
             }
         };
@@ -112,72 +118,93 @@ class SIDProcessor extends AudioWorkletProcessor {
                 continue; 
             }
             
+            // === NATIVE HIGH-PERFORMANCE CYCLE-EXACT LOCKSTEP ENGINE ===
             if (this.isPlaying && this.playAddress > 0) {
-                this.sampleCounter--;
-                if (this.sampleCounter <= 0) {
-                    const overshoot = -this.sampleCounter;
+                // Berechnen, wie viele CPU-Taktzyklen während dieses EINEN Audio-Samples vergangen sind
+                this.cycleAccumulator += this.clock / sampleRate;
+                let cyclesToRun = Math.floor(this.cycleAccumulator);
+                this.cycleAccumulator -= cyclesToRun;
 
-                    let hz = 50.0; 
-                    if (this.useCiaTimer && this.cpu.ciaTimerA > 0) {
-                        hz = this.clock / this.cpu.ciaTimerA;
+                // 1. Hardware-Interrupt Timer dekrementieren (Cycle-Exact!)
+                if (this.useCiaTimer && this.cpu.ciaTimerA > 0) {
+                    this.cpu.ciaTimerA -= cyclesToRun;
+                    if (this.cpu.ciaTimerA <= 0) {
+                        // Timer Reload
+                        let hz = this.clock / (((this.cpu.ram[0xDC05] << 8) | this.cpu.ram[0xDC04]) || 19583);
+                        this.cpu.ciaTimerA += Math.floor(this.clock / hz);
+                        
+                        // CPU wecken und Play-Routine auf den Stack schieben
+                        this.cpu.isIdle = false;
+                        this.cpu.push(0xFF);
+                        this.cpu.push(0xFE);
+                        this.cpu.pc = this.playAddress;
+                        
+                        this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
                     }
-
-                    if (hz < 10) hz = 10;
-                    if (hz > 1000) hz = 1000;
-                    
-                    this.sampleCounter += sampleRate / hz;
-                    this.cpu.write(0xD019, 0x81);
-                    
-                    if (this.isIrqRoutine) {
-                        this.cpu.irq(this.playAddress);
-                    } else {
-                        this.cpu.jsr(this.playAddress);
+                } else {
+                    // Standard PAL VBLANK (50Hz) herabzählen
+                    this.vblankCycles -= cyclesToRun;
+                    if (this.vblankCycles <= 0) {
+                        this.vblankCycles += 19705; // PAL Frame Reload
+                        
+                        this.cpu.isIdle = false;
+                        this.cpu.push(0xFF);
+                        this.cpu.push(0xFE);
+                        this.cpu.pc = this.playAddress;
+                        
+                        this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
                     }
+                }
 
-                    // Phasen-Ausrichtung
-                    for (let v = 0; v < 3; v++) {
-                        let ch = this.sid.voices[v];
-                        if (ch.freq > 0) {
-                            let phaseInc = ((ch.freq * this.clock) / 16777216.0) / sampleRate;
-                            ch.phase = (ch.phase + overshoot * phaseInc) % 1.0;
+                // 2. CPU exakt für "cyclesToRun" laufen lassen
+                // Das verteilt die Register-Schreibvorgänge fließend über das Sample-Intervall
+                while (cyclesToRun > 0) {
+                    if (!this.cpu.isIdle) {
+                        let cyclesUsed = this.cpu.step();
+                        cyclesToRun -= cyclesUsed;
+                        if (this.cpu.pc === 0xFFFF) {
+                            this.cpu.isIdle = true; // Play-Routine beendet (RTS erreicht), CPU schläft wieder
                         }
+                    } else {
+                        cyclesToRun = 0; // CPU schläft, wir können die Schleife sofort abbrechen
                     }
-                    
-                    this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
                 }
             }
-
-            // === DER AUTOMATISCHE DRIFT WURDE SELEKTIV ENTFERNT ===
 
             let mix = 0;
             for (let v = 0; v < 3; v++) {
                 let voiceOut = this.sid.synthesizeVoice(v, this.clock, sampleRate);
                 
                 if (this.sid.regs[23] & (1 << v)) {
-                    // 1. THERMISCHEN DRIFT-KOEFFIZIENT ANWENDEN
-                    // Grenzfrequenz (Cutoff) verschiebt sich rein nutzergesteuert
-                    let thermalCoefficient = 1.0 - (this.temperature - 40.0) * 0.0035;
-                    let activeCutoff = this.sid.cutoff * thermalCoefficient;
+                    let cutoffReg = (this.sid.regs[21] & 7) | (this.sid.regs[22] << 3);
+                    let norm = cutoffReg / 2047.0;
+                    let baseCutoff = 220.0 + Math.pow(norm, 1.4) * 11500.0;
+
+                    let thermalCoefficient = 1.0 - (this.temperature - 55.0) * 0.0035;
+                    let activeCutoff = baseCutoff * thermalCoefficient;
                     if (activeCutoff < 30) activeCutoff = 30;
-                    if (activeCutoff > 12000) activeCutoff = 12000;
+                    if (activeCutoff > 16000) activeCutoff = 16000;
 
                     let f = 2.0 * Math.sin(Math.PI * activeCutoff / sampleRate);
                     if (f > 1.0) f = 1.0; 
                     
-                    this.sid.filterLow += f * this.sid.filterBand;
+                    let resReg = this.sid.regs[23] >> 4;
+                    let normRes = resReg / 15.0;
+                    let q = 1.0 - normRes * 0.92;
                     
-                    // Resonanz dämpft sich je nach gewähltem Temperaturwert
-                    let resonanceDamp = 1.0 - (this.sid.resonance * 0.92) * (1.0 + (this.temperature - 40.0) * 0.001);
-                    if (resonanceDamp < 0.05) resonanceDamp = 0.05;
+                    let thermalDamp = 1.0 + (this.temperature - 55.0) * 0.0015;
+                    q = Math.min(1.0, Math.max(0.04, q * thermalDamp));
 
-                    let feedback = this.sid.filterLow + resonanceDamp * this.sid.filterBand;
+                    let saturatedBand = this.sid.filterBand / (1.0 + Math.abs(this.sid.filterBand));
+                    this.sid.filterLow += f * saturatedBand;
                     
-                    // 2. ANALOGE SÄTTIGUNG (Math.tanh Soft-Clipping) im Op-Amp-Feedback-Weg
-                    let saturatedFeedback = Math.tanh(feedback);
+                    let feedback = this.sid.filterLow + q * this.sid.filterBand;
+                    let saturatedFeedback = feedback / (1.0 + Math.abs(feedback));
                     let high = voiceOut - saturatedFeedback;
-                    this.sid.filterBand += f * high;
                     
-                    // Anti-Windup Hard-Clamping
+                    let saturatedHigh = high / (1.0 + Math.abs(high));
+                    this.sid.filterBand += f * saturatedHigh;
+                    
                     if (this.sid.filterBand > 3.0) this.sid.filterBand = 3.0;
                     if (this.sid.filterBand < -3.0) this.sid.filterBand = -3.0;
                     if (this.sid.filterLow > 3.0) this.sid.filterLow = 3.0;
@@ -186,9 +213,8 @@ class SIDProcessor extends AudioWorkletProcessor {
                     let filterOut = 0;
                     if (this.sid.filterMode & 16) filterOut += this.sid.filterLow; 
                     if (this.sid.filterMode & 32) filterOut += this.sid.filterBand; 
-                    if (this.sid.filterMode & 64) filterOut += high; 
+                    if (this.sid.filterMode & 64) filterOut += saturatedHigh; 
                     
-                    // 3. ANALOGES SIGNAL-LEAKAGE (Leckstrom)
                     let leakage = voiceOut * 0.11;
                     voiceOut = filterOut + leakage;
                 }
@@ -196,6 +222,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             }
 
             let finalOut = (mix / 3.0) * this.sid.masterVol;
+            finalOut = this.dcBlock.process(finalOut);
+
             outL[i] = finalOut;
             if (outR) outR[i] = finalOut;
             if (i === 0) visualValue = finalOut;
@@ -216,7 +244,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                 }
 
                 view[33] = this.temperature;
-
                 this.port.postMessage(view);
             }
             this.wasAudible = isAudible;
