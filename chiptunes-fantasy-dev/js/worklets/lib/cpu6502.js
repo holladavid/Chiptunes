@@ -31,6 +31,7 @@ export class CPU6502 {
         this.a = 0; this.x = 0; this.y = 0;
         this.sp = 0xFF; this.p = 0x20;
         this.isIdle = true;
+        this.ciaTimerA = 19583; // CIA-Timer zurücksetzen
     }
 
     push(val) {
@@ -91,6 +92,21 @@ export class CPU6502 {
         
         let instructions = 0;
         while (this.pc !== 0xFFFF && instructions < 500000) { 
+            this.step();
+            instructions++;
+        }
+    }
+
+    // === HIER IST DIE REKONSTRUIERTE, INTERRUPT-GENAUE IRQ ROUTINE ===
+    irq(addr) {
+        if (addr === 0) return;
+        this.push(0xFF);
+        this.push(0xFE);
+        this.push(this.p);
+        this.pc = addr;
+        
+        let instructions = 0;
+        while (this.pc !== 0xFFFE && this.pc !== 0xFFFF && instructions < 500000) { 
             this.step();
             instructions++;
         }
@@ -229,7 +245,6 @@ export class CPU6502 {
             case 0xF8: this.p |= 8; cycles = 2; break; // SED
             case 0xB8: this.p &= ~64; cycles = 2; break; // CLV
 
-            // === REKONSTRUIERTE SHIFT- & ROTATIONSOPECODES (Zurückgeholt aus dem "...") ===
             case 0x0A: { if (this.a & 128) this.p |= 1; else this.p &= ~1; this.a = (this.a << 1) & 0xFF; this.setNZ(this.a); cycles = 2; } break; // ASL A
             case 0x4A: { if (this.a & 1) this.p |= 1; else this.p &= ~1; this.a = (this.a >> 1) & 0x7F; this.setNZ(this.a); cycles = 2; } break; // LSR A
             case 0x2A: { let c = this.p & 1; if (this.a & 128) this.p |= 1; else this.p &= ~1; this.a = ((this.a << 1) & 0xFF) | c; this.setNZ(this.a); cycles = 2; } break; // ROL A
