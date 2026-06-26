@@ -1,7 +1,7 @@
 // === js/worklets/atari/ym-fantasy.js ===
 // =========================================================
 // YM2149F CORE (CHIPTUNES FANTASY EDITION)
-// Detuned Supersaws, Moog Filters, Delay Network & Bulletproof Visualizer
+// With Sub-Sample Accurate Phase & Envelope Alignment
 // =========================================================
 
 import { YM_DAC, polyBLEP, cubicInterpolate, FourPoleFilter, MoogFilter, DCBlocker, detectDigidrum, detectDigidrumVoice } from '../lib/dsp-utils.js';
@@ -82,11 +82,23 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             if (this.isPlaying && this.trackData) {
                 this.sampleCounter--;
                 if (this.sampleCounter <= 0) {
+                    // === DETERMINISTISCHE SUB-SAMPLE PHASEN-KOMPENSATION ===
+                    const overshoot = -this.sampleCounter;
                     this.sampleCounter += sampleRate / 50.0; 
+                    
                     let frame = this.trackData[this.currentFrame];
                     for(let r=0; r<16; r++) {
-                        if (r === 13) { if (frame[13] !== 0xFF) { this.regs[13] = frame[13]; this.envPhase = 0.0; } } 
-                        else this.regs[r] = frame[r];
+                        if (r === 13) { 
+                            if (frame[13] !== 0xFF) { 
+                                this.regs[13] = frame[13]; 
+                                let pE = (this.regs[12] << 8) | this.regs[11];
+                                let incEnv = (2000000 / (256 * (pE === 0 ? 1 : pE))) / sampleRate;
+                                // Hüllkurve phasenkompensieren
+                                this.envPhase = overshoot * incEnv; 
+                            } 
+                        } else {
+                            this.regs[r] = frame[r];
+                        }
                     }
                     
                     let activeDigiTrigger = detectDigidrum(frame);
@@ -95,7 +107,8 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                     if (activeDigiTrigger > 0 && activeDigiTrigger !== this.lastDigiTrigger) {
                         if (this.digidrums[activeDigiTrigger - 1]) {
                             this.currentDigidrum = this.digidrums[activeDigiTrigger - 1];
-                            this.digiPos = 0;
+                            // Startpunkt Digidrums kompensieren
+                            this.digiPos = overshoot * (7812.5 / sampleRate);
                             this.sidechainEnv = 0.45; 
                             this.port.postMessage({ type: 'DEBUG', msg: 'Drum ' + activeDigiTrigger });
                         }
@@ -105,6 +118,24 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                     if (activeDigiTrigger > 0) {
                         this.currentDrumVoice = activeDigiVoice;
                     }
+
+                    // Frequenzen & Phasen der Oszillatoren mit Overshoot kompensieren
+                    let pA = ((this.regs[1] & 0x0F) << 8) | this.regs[0];
+                    let pB = ((this.regs[3] & 0x0F) << 8) | this.regs[2];
+                    let pC = ((this.regs[5] & 0x0F) << 8) | this.regs[4];
+                    
+                    let incA = (2000000 / (16 * (pA === 0 ? 1 : pA))) / sampleRate;
+                    let incB = (2000000 / (16 * (pB === 0 ? 1 : pB))) / sampleRate;
+                    let incC = (2000000 / (16 * (pC === 0 ? 1 : pC))) / sampleRate;
+
+                    this.phaseA = (this.phaseA + overshoot * incA) % 1.0;
+                    this.phaseB1 = (this.phaseB1 + overshoot * incB) % 1.0;
+                    this.phaseB2 = (this.phaseB2 + overshoot * (incB * 1.003)) % 1.0; 
+                    this.phaseC = (this.phaseC + overshoot * incC) % 1.0;
+                    
+                    this.subPhaseA = (this.subPhaseA + overshoot * (incA * 0.5)) % 1.0;
+                    this.subPhaseB = (this.subPhaseB + overshoot * (incB * 0.5)) % 1.0;
+                    this.subPhaseC = (this.subPhaseC + overshoot * (incC * 0.5)) % 1.0;
 
                     this.currentFrame = (this.currentFrame + 1) % this.trackData.length;
                 }
@@ -274,33 +305,45 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
             let epL_C = Math.cos(stage.C.pan * Math.PI * 0.5); let epR_C = Math.sin(stage.C.pan * Math.PI * 0.5);
             let epL_D = Math.cos(stage.drums.pan * Math.PI * 0.5); let epR_D = Math.sin(stage.drums.pan * Math.PI * 0.5);
 
-            let mixedL = lvlA_L * epL_A + lvlB_L * epL_B + lvlC_L * epL_C + lvlD * epL_D;
-            let mixedR = lvlA_R * epR_A + lvlB_R * epR_B + lvlC_R * epR_C + lvlD * epR_D;
+            let mixL = (lvlA_L * epL_A) + (lvlB_L * epL_B) + (lvlC_L * epL_C) + (lvlD * epL_D);
+            let mixR = (lvlA_R * epR_A) + (lvlB_R * epR_B) + (lvlC_R * epR_C) + (lvlD * epR_D);
 
-            this.delayIdx = (this.delayIdx + 1) & this.delayMask;
-            let dL = this.delayBufL[(this.delayIdx - this.delayTime) & this.delayMask];
-            let dR = this.delayBufR[(this.delayIdx - this.delayTime) & this.delayMask];
+            let readIdxL = (this.delayIdx - tap1 + 65536) % 65536;
+            let readIdxR = (this.delayIdx - tap2 + 65536) % 65536;
+            let readIdx3L = (this.delayIdx - tap3 + 65536) % 65536;
+            let readIdx3R = (this.delayIdx - tap3 + 65536) % 65536;
 
-            let fbL = Math.tanh(mixedL + dL * 0.35);
-            let fbR = Math.tanh(mixedR + dR * 0.35);
+            let r1L = this.delayBufL[readIdxL];
+            let r2R = this.delayBufR[readIdxR];
+            let r3L = this.delayBufL[readIdx3L];
+            let r3R = this.delayBufR[readIdx3R];
 
-            this.delayBufL[this.delayIdx] = fbL;
-            this.delayBufR[this.delayIdx] = fbR;
+            this.delayLpL += 0.2 * ((r1L + r3R) * 0.5 - this.delayLpL); 
+            this.delayLpR += 0.2 * ((r2R + r3L) * 0.5 - this.delayLpR); 
 
-            let finalL = mixedL + dL * 0.25;
-            let finalR = mixedR + dR * 0.25;
+            let finalL = mixL + this.delayLpL * 0.6; 
+            let finalR = mixR + this.delayLpR * 0.6;
 
-            finalL = this.dcBlockL.process(finalL);
-            finalR = this.dcBlockR.process(finalR);
+            let revL = (lvlA_L * epL_A * stage.A.rev) + (lvlB_L * epL_B * stage.B.rev) + (lvlC_L * epL_C * stage.C.rev) + (lvlD * epL_D * stage.drums.rev);
+            let revR = (lvlA_R * epR_A * stage.A.rev) + (lvlB_R * epR_B * stage.B.rev) + (lvlC_R * epR_C * stage.C.rev) + (lvlD * epR_D * stage.drums.rev);
 
-            outL[i] = finalL;
-            if (outR) outR[i] = finalR;
-            if (i === 0) currentVisualValue = (finalL + finalR) / 2.0;
+            this.delayBufL[this.delayIdx] = revR * 0.4 + this.delayLpL * 0.5;
+            this.delayBufR[this.delayIdx] = revL * 0.4 + this.delayLpR * 0.5;
+            this.delayIdx = (this.delayIdx + 1) % 65536;
+
+            finalL = (Math.tanh(finalL * 2.8) / 1.1) * 0.95;
+            finalR = (Math.tanh(finalR * 2.8) / 1.1) * 0.95;
+
+            let dcL = this.dcBlockL.process(finalL);
+            let dcR = this.dcBlockR.process(finalR);
+
+            outL[i] = dcL;
+            if (outR) outR[i] = dcR;
+            if (i === 0) currentVisualValue = (dcL + dcR) / 2.0;
         }
 
         this.visCounter = (this.visCounter || 0) + 1;
         if (this.visCounter % 4 === 0) {
-            // === NEU: NATIVES KLONEN OHNE ENTWERTIERUNG (Sturzfest!) ===
             let isAudible = Math.abs(currentVisualValue) > 0.001;
             if (isAudible || this.wasAudible) {
                 const view = this.visualView;
@@ -309,17 +352,15 @@ class YMFantasyProcessor extends AudioWorkletProcessor {
                 view[2] = this.currentFrame;
                 view[3] = currentVisualValue;
 
-                // Die 16 YM-Register kopieren
                 for (let r = 0; r < 16; r++) {
                     view[4 + r] = this.regs[r];
                 }
 
-                // Sichern der Live-Canvas-Linie
                 this.port.postMessage(view);
             }
             this.wasAudible = isAudible;
         }
-        return true;
+        return true; 
     }
 }
 
