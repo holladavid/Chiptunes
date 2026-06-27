@@ -1,7 +1,7 @@
 // === js/worklets/amiga/paula-worklet.js ===
 // ==========================================
 // MOS TECHNOLOGY PAULA 8364 CHIP EMULATION
-// With Constant-Power Stereo Panning & Vibrato LFO
+// With Constant-Power Stereo Panning, Vibrato LFO & Sample-Swap Retriggering
 // ==========================================
 
 class StaticRCFilter {
@@ -63,6 +63,9 @@ class PaulaChannel {
         this.vibratoDepth = 0;
         this.vibratoPhase = 0;
         this.hasVibrato = false;
+        
+        // Tracking für Instrumentenwechsel
+        this.lastPlayedSample = 0;
     }
 
     trigger(data, loopStart, loopLen) {
@@ -180,8 +183,8 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     this.channels[i].targetPeriod = 0;
                     this.channels[i].portamentoSpeed = 0;
                     this.channels[i].basePeriod = 428;
+                    this.channels[i].lastPlayedSample = 0;
                     
-                    // XM-Spuren starten standardmäßig zentriert, MODs im klassischen L-R-R-L Schema
                     if (isXM) {
                         this.channels[i].pan = 0.5;
                     } else {
@@ -276,7 +279,14 @@ class PaulaProcessor extends AudioWorkletProcessor {
             const param = pattern[cellOffset + 5];
 
             const channel = this.channels[ch];
-            const isPortamento = (effect === 0x03 || effect === 0x05) && (channel.data !== null);
+            
+            // Ermittle ob das geladene Instrument vom aktuell spielenden Instrument abweicht
+            const isSampleChange = (sample > 0 && sample !== channel.lastPlayedSample);
+            
+            // Tracker-Bedingung: Nur gleitend überblenden, wenn:
+            // 1. Der Kanal bereits aktiv ein Sample abspielt (channel.data !== null)
+            // 2. UND wir kein völlig neues Instrument auf diese Spur zwingen (isSampleChange)
+            const isPortamento = (effect === 0x03 || effect === 0x05) && (channel.data !== null) && !isSampleChange;
 
             if (sample > 0) {
                 channel.activeSample = sample;
@@ -290,6 +300,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     if (!isPortamento) {
                         channel.trigger(currentSmpObj.data, currentSmpObj.loopStart, currentSmpObj.loopLen);
                         channel.pointer = overshoot * (clockTicksPerSample / channel.per);
+                        channel.lastPlayedSample = sample; // Aktualisiere den Index nur bei echtem Trigger
                     }
                     channel.vol = currentSmpObj.baseVolume; 
                 }
@@ -329,7 +340,6 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     channel.vol = volume; 
                 }
 
-                // Vibrato zurücksetzen, wenn kein neuer Vibrato-Befehl anliegt
                 if (effect !== 0x04) {
                     channel.hasVibrato = false;
                 }
@@ -340,7 +350,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
                             channel.portamentoSpeed = param;
                         }
                         break;
-                    case 0x04: // Vibrato (Tick 0)
+                    case 0x04: 
                         if (param > 0) {
                             const speed = (param >> 4) & 0x0F;
                             const depth = param & 0x0F;
@@ -349,7 +359,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
                         }
                         channel.hasVibrato = true;
                         break;
-                    case 0x08: // Set Panning (0x00 - 0xFF)
+                    case 0x08: 
                         channel.pan = param / 255.0;
                         break;
                     case 0x0C: 
@@ -422,7 +432,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
                             }
                         }
                         break;
-                    case 0x04: // Vibrato (Tick > 0)
+                    case 0x04: 
                         if (channel.hasVibrato) {
                             channel.vibratoPhase = (channel.vibratoPhase + channel.vibratoSpeed) & 63;
                             const vibOffset = Math.sin(channel.vibratoPhase * (Math.PI / 32)) * channel.vibratoDepth * 2.5; 
@@ -506,7 +516,6 @@ class PaulaProcessor extends AudioWorkletProcessor {
             for (let c = 0; c < this.numChannels; c++) {
                 let sampleVal = this.channels[c].step(clockTicksPerSample);
                 if (sampleVal !== 0) {
-                    // Dynamisches Constant-Power-Panning anwenden
                     const pan = this.channels[c].pan;
                     mixedL += sampleVal * Math.cos(pan * Math.PI * 0.5); 
                     mixedR += sampleVal * Math.sin(pan * Math.PI * 0.5); 
