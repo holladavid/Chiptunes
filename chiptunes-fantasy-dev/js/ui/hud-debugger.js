@@ -1,7 +1,7 @@
 // === js/ui/hud-debugger.js ===
 // =========================================================
 // HIGH-PERFORMANCE REGISTER HUD & ANALYZER MODULE
-// Standardized Layouts & Context-Agnostic Render Nodes
+// Dynamic Layouts & Correct Non-Linear Filter Displays
 // =========================================================
 
 const NOISE_LUT_HZ = [
@@ -254,7 +254,6 @@ export function updateChipHUD(stateGetters) {
                                 <label>Voice3 Off</label>
                                 <div class="hud-led" id="c64-v3off-led"></div>
                             </div>
-                            <!-- KORREKTUR: Unbenutzte Digi Hack Zeile für C64 entfernt -->
                         </div>
                     </div>
                 </div>
@@ -263,6 +262,12 @@ export function updateChipHUD(stateGetters) {
             cachedSystem = 'c64';
 
         } else if (activeSystem === 'amiga') {
+            let ledState = currentChipRegs && currentChipRegs[29] !== undefined ? currentChipRegs[29] : 1;
+            let ledClass = ledState === 1 ? 'on' : '';
+            let ledStyle = ledState === 1 
+                ? 'background:#ff0000; box-shadow:0 0 8px #ff0000;' 
+                : 'background:#440000; box-shadow:none;';
+
             matrix.innerHTML = `
                 <div class="atari-analyzer-grid">
                     <div>
@@ -281,14 +286,13 @@ export function updateChipHUD(stateGetters) {
                             <div class="hud-row">
                                 <label>LED Filter</label>
                                 <span class="hud-text-sel" style="flex-grow: 1;">12dB Butterworth</span>
-                                <div class="hud-led on" id="amiga-led-pwr" style="background:#ff0000; box-shadow:0 0 8px #ff0000; border-color:#ff8800;"></div>
+                                <div class="hud-led ${ledClass}" id="amiga-led-pwr" style="${ledStyle} border-color:#ff8800; cursor:pointer;" title="Klicken, um Amiga LED-Filter manuell umzuschalten"></div>
                                 <span style="font-size:0.8em; margin-left:8px; color:var(--text-color);">PWR</span>
                             </div>
                             <div class="hud-row">
                                 <label>RC Filter</label>
                                 <span class="hud-text-sel" style="flex-grow: 1;">6dB Static (4.42kHz)</span>
                             </div>
-                            <!-- KORREKTUR: Unbenutzte Digi Hack Zeile für Amiga entfernt -->
                         </div>
                     </div>
                 </div>
@@ -410,12 +414,12 @@ export function updateChipHUD(stateGetters) {
         
         histIdx = (histIdx + 1) % HIST_LEN;
 
-        // === HIER IST DIE MATHEMATISCH SYNCHRONISIERTE GRENZFREQUENZ-BERECHNUNG ===
-        let temp = r[29] || 55; // Default auf 55°C
+        // === KORREKT: SYNCHRONISIERTES DYNAMISCHES THERMISCHES FEEDBACK FÜR DEN HUD-WERTE ===
+        let temp = r[29] || 55; // Re-Mappen auf den persistenten, eingestellten User-Wert
         let fcut = (r[21] & 7) | (r[22] << 3);
         let norm = fcut / 2047.0;
         
-        // Identisches physikalisches Modell wie im Audio-Thread (reSID-konforme Kondensator-Untergrenze bei 220Hz!)
+        // Identisches physikalisches Modell wie im Audio-Thread (Kondensator-Untergrenze bei 220Hz!)
         let baseCutoff = 220.0 + Math.pow(norm, 1.4) * 11500.0;
         let thermalCoefficient = 1.0 - (temp - 55.0) * 0.0035;
         let fhz = baseCutoff * thermalCoefficient;
@@ -423,6 +427,7 @@ export function updateChipHUD(stateGetters) {
 
         document.getElementById('c64-cut-bar').style.width = (fcut / 2047 * 100) + '%';
         document.getElementById('c64-cut-val').innerText = `${Math.round(fhz)} Hz (${temp}°C)`;
+
         let fres = r[23] >> 4;
         document.getElementById('c64-res-bar').style.width = (fres / 15 * 100) + '%';
         document.getElementById('c64-res-val').innerText = fres;

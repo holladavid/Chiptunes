@@ -1,3 +1,4 @@
+// === js/app.js ===
 // =========================================================================
 //                  CHIPTUNES FANTASY - MAIN APP CONTROLLER
 // =========================================================================
@@ -84,6 +85,30 @@ function initApp() {
         });
         
         initScroller(() => currentScrollerText, () => isEcoMode); 
+        
+        // INTERAKTIVE SKEUOMORPHIC LED KOPPLUNG (AMIGA)
+        document.getElementById('chip-hud').addEventListener('click', (e) => {
+            if (e.target && e.target.id === 'amiga-led-pwr') {
+                const isFilterOn = e.target.classList.contains('on');
+                const nextState = !isFilterOn;
+                
+                if (nextState) {
+                    e.target.classList.add('on');
+                    e.target.style.background = '#ff0000';
+                    e.target.style.boxShadow = '0 0 8px #ff0000';
+                } else {
+                    e.target.classList.remove('on');
+                    e.target.style.background = '#440000';
+                    e.target.style.boxShadow = 'none';
+                }
+
+                const paulaNode = getPaulaNode();
+                if (paulaNode) {
+                    paulaNode.port.postMessage({ type: 'SET_LED_FILTER', enabled: nextState });
+                }
+            }
+        });
+
         setTheme('theme-c64');
     });
 }
@@ -143,7 +168,6 @@ progressSlider.addEventListener('change', (e) => {
     }
 });
 
-// === DER REPARIERTE VISUALISIERUNGS-SPEICHER-EMPFÄNGER ===
 function handleWorkletMessage(e) {
     if (e.data instanceof Float32Array) {
         const view = e.data;
@@ -156,21 +180,32 @@ function handleWorkletMessage(e) {
             currentChipRegs = new Uint8Array(32);
         }
         
-        // Bis zu 32 Register-Einträge kopieren (für alle C64 SID Register)
         for (let i = 0; i < 32; i++) {
             currentChipRegs[i] = view[4 + i];
         }
 
-        // Dynamisches thermisches Feedback für C64
+        // === THERMISCHES FEEDBACK FÜR DEN SID-FILTER ===
         if (systemId === 0) {
             const tempVal = Math.round(view[33]);
             currentChipRegs[29] = tempVal; // In virtuellem Register 29 parken für HUD
+        }
+
+        // DYNAMISCHES SCHLÜSSEL-UPDATE FÜR DIE AMIGA LED
+        if (systemId === 1) {
+            const ledState = Math.round(view[33]);
+            currentChipRegs[29] = ledState; 
             
-            const tempSlider = document.getElementById('temp-slider');
-            const tempDisplay = document.getElementById('temp-display');
-            if (tempSlider && document.activeElement !== tempSlider) {
-                tempSlider.value = tempVal;
-                if (tempDisplay) tempDisplay.innerText = `${tempVal}°C`;
+            const pwrLed = document.getElementById('amiga-led-pwr');
+            if (pwrLed) {
+                if (ledState === 1) {
+                    pwrLed.classList.add('on');
+                    pwrLed.style.background = '#ff0000';
+                    pwrLed.style.boxShadow = '0 0 8px #ff0000';
+                } else {
+                    pwrLed.classList.remove('on');
+                    pwrLed.style.background = '#440000';
+                    pwrLed.style.boxShadow = 'none';
+                }
             }
         }
 
@@ -334,7 +369,6 @@ function setTheme(themeName) {
 
     activeSystem = themeName === 'theme-atari' ? 'atari' : themeName === 'theme-amiga' ? 'amiga' : 'c64';
     
-    // Temperaturregler-Sichtbarkeit umschalten
     const tempContainer = document.getElementById('temp-control-container');
     if (tempContainer) {
         if (activeSystem === 'c64') tempContainer.classList.remove('hidden');
@@ -532,7 +566,7 @@ async function selectAndPlayTrack(index, system) {
                 if (meta.digidrumCount > 0) {
                     techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> ${meta.digidrumCount} Digidrum(s) detected!</p>`;
                     let sizes = meta.digidrumSizes.map(s => s.toLocaleString('de-DE') + ' Bytes').join(' / ');
-                    techInfo += `<p style="font-size: 0.9em; margin-left: 10px; color: var(--text-color); opacity: 0.8;">> Sample sizes: [ ${sizes} ]</p>`;
+                    techInfo += `<p style="font-size: 0.9em; margin-left: 10px; color: var(--text-color); opacity: 0.8;">&gt; Sample sizes: [ ${sizes} ]</p>`;
                 } else {
                     techInfo += `<p style="margin-top: 5px;"><strong>PCM Data:</strong> None. 100% pure synthesized chip magic.</p>`;
                 }
@@ -551,7 +585,7 @@ async function selectAndPlayTrack(index, system) {
 
             document.getElementById('info-text').innerHTML = `
                 <div style="margin-bottom: 20px;">
-                    <h2 style="color: var(--highlight-color);">> NOW PLAYING:</h2>
+                    <h2 style="color: var(--highlight-color);">&gt; NOW PLAYING:</h2>
                     <p style="font-size: 1.2em; padding-top: 5px;">${selectedSong.title}</p>
                 </div>
                 ${dynamicHTML}
@@ -573,7 +607,7 @@ async function selectAndPlayTrack(index, system) {
 
         document.getElementById('info-text').innerHTML = `
             <div style="margin-bottom: 20px;">
-                <h2 style="color: var(--highlight-color);">> NOW PLAYING:</h2>
+                <h2 style="color: var(--highlight-color);">&gt; NOW PLAYING:</h2>
                 <p style="font-size: 1.2em; padding-top: 5px;">${selectedSong.title}</p>
             </div>
             ${selectedSong.composerInfo}
@@ -767,7 +801,7 @@ document.getElementById('core-selector').addEventListener('change', async (e) =>
     startPlayback(); 
 });
 
-// Kopplung des neuen, interaktiven analogen Temperaturreglers
+// Kopplung des neuen, interaktiven analogen Temperaturreglers (Ohne Auto-Reset-Konflikt!)
 document.getElementById('temp-slider').addEventListener('input', (e) => {
     const tempVal = parseInt(e.target.value);
     document.getElementById('temp-display').innerText = `${tempVal}°C`;

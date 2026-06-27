@@ -1,7 +1,7 @@
 // === js/worklets/amiga/paula-worklet.js ===
 // ==========================================
 // MOS TECHNOLOGY PAULA 8364 CHIP EMULATION
-// With Sub-Sample Accurate Phase & Sample Pointer Alignment
+// With ProTracker E0x Filter Modulation & Safe-Cloned Visualizer
 // ==========================================
 
 class StaticRCFilter {
@@ -140,7 +140,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
         this.staticR = new StaticRCFilter(sampleRate);
         this.ledL = new AmigaLEDFilter(sampleRate);
         this.ledR = new AmigaLEDFilter(sampleRate);
-        this.ledFilterOn = true; 
+        this.ledFilterOn = true; // Der Amiga startet standardmäßig mit gedimmter LED (Filter an)
 
         this.port.onmessage = (e) => {
             const msg = e.data;
@@ -230,8 +230,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
 
         const rowOffset = this.currentRow * this.numChannels * 6;
 
-        // === DETERMINISTISCHE SUB-SAMPLE PHASEN-KOMPENSATION ===
-        const overshoot = -this.samplesUntilNextTick; // Fraktionaler Überhang in Samples
+        const overshoot = -this.samplesUntilNextTick; 
         const clockTicksPerSample = this.clock / sampleRate;
 
         for (let ch = 0; ch < this.numChannels; ch++) {
@@ -252,12 +251,10 @@ class PaulaProcessor extends AudioWorkletProcessor {
             const currentSmpObj = this.samples[smpName];
 
             if (this.currentTick === 0) {
-                // --- TICK 0: Trigger Phase ---
+                // --- TICK 0 ---
                 if (sample > 0 && currentSmpObj && currentSmpObj.data) {
                     channel.trigger(currentSmpObj.data, currentSmpObj.loopStart, currentSmpObj.loopLen);
                     channel.vol = currentSmpObj.baseVolume; 
-                    
-                    // Sample-Zeiger sub-sample-genau ausrichten!
                     channel.pointer = overshoot * (clockTicksPerSample / channel.per);
                 }
 
@@ -275,7 +272,6 @@ class PaulaProcessor extends AudioWorkletProcessor {
                         }
                     }
                     if (period !== 0xFFFF && period !== 97) {
-                        // Phasen-Akkumulator exakt auf die Rhythmus-Achse synchronisieren!
                         channel.phase = overshoot * (clockTicksPerSample / channel.per);
                     }
                 }
@@ -308,9 +304,15 @@ class PaulaProcessor extends AudioWorkletProcessor {
                         this.currentOrder++;
                         this.currentTick = -1;
                         break;
+                    
+                    // === NEU: NATIVE EMULATION DES PROTRACKER E0x-FILTER-EFFEKTS ===
+                    case 0x0E:
+                        if ((param & 0xF0) === 0x00) { // E0x Befehl detektiert
+                            this.ledFilterOn = (param & 0x0F) === 0; // E00 = Filter an (LED an), E01 = Filter aus
+                        }
+                        break;
                 }
             } else {
-                // --- TICK > 0 ---
                 switch (effect) {
                     case 0x00: 
                         if (param > 0 && channel.per > 0) {
@@ -453,6 +455,9 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     
                     view[4 + offset + 6] = Math.round(ch.vol) & 0xFF;
                 }
+
+                // Amiga LED Status im Puffer übertragen (Index 33)
+                view[33] = this.ledFilterOn ? 1.0 : 0.0;
 
                 this.port.postMessage(view);
             }

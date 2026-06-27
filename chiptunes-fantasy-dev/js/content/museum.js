@@ -1,17 +1,15 @@
 // === js/content/museum.js ===
 // ==========================================
 // DAS DIGITALE MUSEUM (Texte & Handbücher)
-// Mit präzisierten C64 SID Filter-Spezifikationen
+// Mit integrierten Hardware-Spezifikations-Tabellen
 // ==========================================
 
 export const systemDescriptions = {
 c64: `
         <!-- === TECHNICAL SPECIFICATION GRID (C64 SID 6581) === -->
-        <!-- Schriftgröße vergrößert auf 1.2x (entspricht 12px bei 10px Basis) -->
         <div style="border: 2px solid var(--text-color); padding: 8px 12px; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 1.2); background: rgba(0,0,0,0.3); font-family: monospace;">
             <p style="color: var(--highlight-color); margin-bottom: 8px; font-weight: bold; border-bottom: 1px dashed var(--text-color); padding-bottom: 4px;">>>> HARDWARE SPECIFICATIONS:</p>
             <div style="display: grid; grid-template-columns: 140px 1fr; gap: 6px; line-height: 1.4;">
-                <!-- KORREKTUR: Filter-Architektur präzisiert -->
                 <div><strong>Kanäle:</strong></div><div>3 unabhängige Synthesestimmen + 1 routbares analoges VCF</div>
                 <div><strong>Taktfrequenz:</strong></div><div>985.248 Hz (PAL) / 1.022.727 Hz (NTSC)</div>
                 <div><strong>Wellenformen:</strong></div><div>Dreieck, Sägezahn, PWM, Rauschen (23-Bit LFSR), analoge Gatter-Mischungen</div>
@@ -34,7 +32,7 @@ c64: `
             <p style="margin-top: 5px;"><strong>Mit dem <em>TEMP</em>-Regler</strong> kannst du genau dieses Klima nun selbst steuern. Zieh ihn auf eiskalte <strong>15°C</strong> für brillante, aggressiv schneidende Höhen, oder auf glühende <strong>75°C</strong> für den legendären, warm-sättigenden und dumpfen Sound. Was damals der Albtraum für C64-Coder war, ist heute dein Spielplatz.</p>
 
             <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DER HUBBARD'SCHE RAUSCH-ZUFALLS-HACK ($D41B)</h4>
-            <p>Rob Hubbard (Komponist von <em>Commando</em> und <em>Delta</em>) stand vor dem Problem, dass der C64 keinen mathematischen Zufallsgenerator besitzt, um dynamische Snare-Drums und Hi-Hats zu berechnen. Seine geniale Lösung: Er schaltete Oszillator 3 auf Rauschen und las in seiner Play-Routine kontinuierlich das Hardware-Register <strong>$D41B (Voice 3 Waveform Output)</strong> aus. Die fluktuierenden Rohdaten nutzte er direkt als Hardware-Zufallszahlen für seine peitschenden Percussions!</p>
+            <p>Rob Hubbard (Komponist von <em>Commando</em> und <em>Delta</em>) stand vor dem Problem, dass der C64 keinen mathematischen Zufallsgenerator besitzt, um dynamische Snare-Drums und Hi-Hats zu berechnen. Seine geniale Lösung: Er schaltete Oszillator 3 auf Rauschen und las in seiner Play-Routine kontinuierlich das Hardware-Register <strong>$D41B (Voice 3 Waveform Output)</strong> aus. Die fluktuierenden Rohdaten nutzte er direkt as Hardware-Zufallszahlen für seine peitschenden Percussions!</p>
 
             <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DIE 3-STIMMEN-POLYPHONIE-FALLE (ARPEGGIOS)</h4>
             <p>Da der SID nur über 3 Stimmen verfügt, mussten Musiker tricksen, um dreistimmige Akkorde plus Bass und Melodie abzubilden. Sie koppelten die Akkord-Noten (z. B. Grundton, kleine Terz, Quinte) in einer schnellen 50Hz-VBLANK-Routine auf einer einzigen Stimme. Durch das rasant schnelle Umschalten der Frequenz entsteht das berühmte "Flirren" (Arpeggio), das dem menschlichen Ohr einen echten, dreistimmigen Akkord vorgaukelt.</p>
@@ -48,9 +46,8 @@ c64: `
     `,
    amiga: `
         <!-- === TECHNICAL SPECIFICATION GRID (AMIGA MOS PAULA 8364) === -->
-        <!-- Schriftgröße auf harmonische 0.85x zurückgesetzt (entspricht 15.3px bei 18px Basis) -->
-        <div style="border: 2px solid var(--text-color); padding: 8px 12px; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 0.85); background: rgba(0,0,0,0.3); font-family: monospace;">
-            <p style="color: var(--highlight-color); margin-bottom: 8px; font-weight: bold; border-bottom: 1px dashed var(--text-color); padding-bottom: 4px;">>>> HARDWARE SPECIFICATIONS:</p>
+        <div style="padding: 4px 0; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 0.85); background: transparent; font-family: monospace;">
+            <p style="color: var(--highlight-color); margin-bottom: 12px; font-weight: bold; padding-bottom: 4px;">>>> HARDWARE SPECIFICATIONS:</p>
             <div style="display: grid; grid-template-columns: 140px 1fr; gap: 6px; line-height: 1.4;">
                 <div><strong>Kanäle:</strong></div><div>4 x ungeteilte DMA-PCM-Kanäle (festes Panning: 2 Links, 2 Rechts)</div>
                 <div><strong>Taktfrequenz:</strong></div><div>3.546.895 Hz (PAL Master Clock / 3.55 MHz)</div>
@@ -63,7 +60,12 @@ c64: `
 
         <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2); line-height: 1.6;">
             <h3 style="color: var(--highlight-color); margin-bottom: 5px;">[ CHIP-SPECS: MOS PAULA 8364 (AMIGA 500) ]</h3>
-            <p>Paula war ein reiner DMA-Sample-Player, der 4 unabhängige PCM-Kanäle direkt aus dem Chip-RAM auslas. Um den typischen "Amiga 500 Sound" exakt nachzubilden, emuliert dieser Standard-Core zwei hardware-spezifische Bausteine:</p>
+            <p>Paula war ein reiner DMA-Sample-Player, der 4 unabhängige PCM-Kanäle direkt aus dem Chip-RAM auslas. Um den typischen "Amiga 500 Sound" exakt nachzubilden, emuliert dieser Standard-Core drei hardware-spezifische Bausteine:</p>
+
+            <!-- NEU: Exakte, tiefgründige Erklärung der variablen D/A-Wandlungsrate hier im Haupt-Deep-Dive! -->
+            <h4 style="color: var(--highlight-color); margin: 15px 0 5px 0;">> DIE VARIABLE D/A-WANDLUNGSRATE (DER AMIGA-SCHIMMER)</h4>
+            <p>Paula arbeitet im Gegensatz zu modernen Soundkarten nicht mit einer starren, globalen Samplerate (wie 44.1 kHz oder 48 kHz). Jeder der 4 Kanäle liest sein Sample mit einer völlig eigenständigen Hardware-Geschwindigkeit aus!<br>
+            Diese Rate wird direkt aus dem PAL-Haupttakt (3.546.895 Hz) geteilt durch den im Register hinterlegten Periodenwert berechnet. Dieses variable Auslesen erzeugt im Hochtonbereich die berühmten analogen Spiegelfrequenzen (Aliasing) – den legendären <strong>Amiga-Schimmer</strong>, der Tracker-Musik diesen unverwechselbar lebendigen Glanz verleiht.</p>
 
             <h4 style="color: var(--highlight-color); margin: 15px 0 5px 0;">> BIT-GENAUE DAC-MULTIPLIKATION</h4>
             <p>Das D/A-Wandler-System multipliziert das vorzeichenbehaftete 8-Bit-Sample in Echtzeit mit dem 6-Bit-Lautstärkeregister (0-64). Das resultiert in einer 14-Bit Digitalauflösung mit dem berühmt-berüchtigten, erdigen "Crunch" und metallischen Spiegelfrequenzen (Aliasing) im Hochtonbereich.</p>
@@ -77,7 +79,7 @@ c64: `
     `,
     atari: `
         <!-- === TECHNICAL SPECIFICATION GRID (ATARI YM2149F) === -->
-        <div style="border: 2px solid var(--text-color); padding: 8px 12px; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 0.75); background: rgba(0,0,0,0.3); font-family: monospace;">
+        <div style="padding: 4px 0; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 0.75); background: transparent; font-family: monospace;">
             <p style="color: var(--highlight-color); margin-bottom: 8px; font-weight: bold; border-bottom: 1px dashed var(--text-color); padding-bottom: 4px;">>>> HARDWARE SPECIFICATIONS:</p>
             <div style="display: grid; grid-template-columns: 140px 1fr; gap: 6px; line-height: 1.4;">
                 <div><strong>Kanäle:</strong></div><div>3 analoge Hauptkanäle (A, B, C) mit zuschaltbarem Rauschen (kein 4. Kanal)</div>
@@ -147,6 +149,9 @@ export const chipCheatSheets = {
         <span style="color:#fff">CH1-CH4 (je 4 Bytes):</span><br>
         [0-1]: Periode (Pitch)<br>
         [2]: Volume (0-64)<br>
-        [3]: Trigger-Status (Aktiv/Inaktiv)
+        [3]: Trigger-Status (Aktiv/Inaktiv)<br>
+        <br>
+        <span style="color:#ff8800">💡 Gehäuse-LED-Filter (Bypass):</span><br>
+        Die rote <span style="color:#fff">Power-LED (PWR)</span> ist interaktiv! Klicke direkt darauf, um das analoge 12dB/Okt-Tiefpass-Filter (LED-Filter) manuell zu überbrücken (gedimmt/on = warmer, weicher Sound; hell/off = klarer, höhenreicher Sound).
     `
 };
