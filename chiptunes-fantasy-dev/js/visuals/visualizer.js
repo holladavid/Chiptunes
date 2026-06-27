@@ -81,37 +81,43 @@ export function initVisuals(stateGetters, callbacks) {
         
         const isAmiga = document.body.classList.contains('theme-amiga');
         const isAtari = document.body.classList.contains('theme-atari');
+        
+        const pal1 = isAtari ? ['#005500', '#00aa00'] : isAmiga ? ['#0000aa', '#0055ff'] : ['#352879', '#6c5eb5'];
+        const pal2 = isAtari ? ['#555500', '#aaaa00'] : isAmiga ? ['#aa5500', '#ff8800'] : ['#aa0055', '#ff00aa'];
+        const pal3 = isAtari ? ['#005555', '#00aaaa'] : isAmiga ? ['#5500aa', '#aa00ff'] : ['#555555', '#aaaaaa'];
         const lineColor = isAtari ? '#55ff55' : isAmiga ? '#ff8800' : '#6c5eb5';
 
         // === DOPPELTE KANALKOPPLUNG FÜR COPPERBARS ===
-        // Auslesen der einzelnen Kanallautstärken (0.0 bis 1.0)
         const channelVolumes = stateGetters.getChannelVolumes ? stateGetters.getChannelVolumes() : [0, 0, 0, 0];
         const numBars = isAmiga ? 4 : 3;
 
         const pals = [
-            isAtari ? ['#005500', '#00aa00'] : isAmiga ? ['#0000aa', '#0055ff'] : ['#352879', '#6c5eb5'], // Bar 0
-            isAtari ? ['#555500', '#aaaa00'] : isAmiga ? ['#aa5500', '#ff8800'] : ['#aa0055', '#ff00aa'], // Bar 1
-            isAtari ? ['#005555', '#00aaaa'] : isAmiga ? ['#5500aa', '#aa00ff'] : ['#555555', '#aaaaaa'], // Bar 2
-            isAmiga ? ['#555555', '#ffffff'] : [] // Bar 3 (Nur für Amiga!)
+            isAtari ? ['#005500', '#00aa00'] : isAmiga ? ['#0000aa', '#0055ff'] : ['#352879', '#6c5eb5'],
+            isAtari ? ['#555500', '#aaaa00'] : isAmiga ? ['#aa5500', '#ff8800'] : ['#aa0055', '#ff00aa'],
+            isAtari ? ['#005555', '#00aaaa'] : isAmiga ? ['#5500aa', '#aa00ff'] : ['#555555', '#aaaaaa'],
+            isAmiga ? ['#555555', '#ffffff'] : []
         ];
 
-        // Sinus-Waber-Konfigurationen pro Bar für weiches Demoszene-Gefühl
         const sinTimes = [1.2, 1.8, 1.5, 2.1];
         const sinOffsets = [0.0, 2.0, 4.0, 1.5];
-        const baseThickness = [25, 20, 15, 12];
+        
+        // === FEINERE, FILIGRANERE BASISDICKEN FÜR REINERE OPTIK ===
+        const baseThickness = [14, 10, 8, 6]; 
         const heightWeights = [0.3, 0.35, 0.25, 0.28];
 
         ctx.globalCompositeOperation = "screen"; 
         for (let c = 0; c < numBars; c++) {
             let vol = channelVolumes[c] || 0;
-            let punch = vol * 45; // Dicke gekoppelt an die Lautstärke des einzelnen Kanals!
+            
+            // Reduzierter Punch (Ausschlag) verhindert das unschöne Verschmelzen der Linien
+            let punch = vol * 18; 
             
             let yCenter = (canvas.height / 2) + Math.sin(t * sinTimes[c] + sinOffsets[c]) * (canvas.height * heightWeights[c]);
             drawCopperBar(yCenter, baseThickness[c] + punch, pals[c][0], pals[c][1]);
         }
         ctx.globalCompositeOperation = "source-over";
 
-        // --- 3. DAS OSZILLOSKOP ---
+        // --- DAS OSZILLOSKOP ---
         const currentOscValue = stateGetters.getCurrentOscValue();
         const trackData = stateGetters.getTrackData();
         const trackLength = trackData ? (trackData.length || 0) : 0;
