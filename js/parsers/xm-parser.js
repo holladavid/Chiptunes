@@ -1,6 +1,7 @@
 // === js/parsers/xm-parser.js ===
 // ==========================================
 // FASTTRACKER II (.XM) COMPACT BINARY PARSER
+// With Ping-Pong Loop Unrolling & Linear Frequency Flag
 // ==========================================
 
 export async function loadXmFile(url) {
@@ -25,13 +26,16 @@ export async function loadXmFile(url) {
     let numPatterns = view.getUint16(70, true);
     let numInstruments = view.getUint16(72, true);
     
+    // --- NEU: Linear Frequency Flag auslesen ---
+    let flags = view.getUint16(74, true);
+    let linearFreq = (flags & 1) === 1;
+    
     let defaultSpeed = view.getUint16(76, true); 
     let defaultTempo = view.getUint16(78, true);
     
     let orderTable = new Uint8Array(songLength);
     for(let i=0; i<songLength; i++) orderTable[i] = data[80 + i];
 
-    // 1. PATTERNS ZUERST PARSEN (Strikte Einhaltung der sequentiellen Dateistruktur!)
     let offset = 60 + headerSize;
     let patterns = [];
 
@@ -64,16 +68,13 @@ export async function loadXmFile(url) {
                     }
                 }
                 
-                // Volume Column Byte Dekompression
                 let volVal = 0xFF; 
                 if (vol >= 0x10 && vol <= 0x50) {
                     volVal = vol - 0x10;
                 }
                 
-                // Wir speichern die rohe Note (0-97) direkt in den Period-Bytes ab (16-Bit)
-                // Das Worklet rechnet dies später zur Laufzeit zusammen mit relNote in Frequenzen um.
                 cellBuffer[dst]     = note & 0xFF;
-                cellBuffer[dst + 1] = 0; // High-Byte ungenutzt für Note
+                cellBuffer[dst + 1] = 0; 
                 cellBuffer[dst + 2] = smp;
                 cellBuffer[dst + 3] = volVal;
                 cellBuffer[dst + 4] = eff;
@@ -89,7 +90,6 @@ export async function loadXmFile(url) {
         offset += patHeaderLen + packedSize;
     }
 
-    // 2. INSTRUMENTE & DELTA-SAMPLES ERST DANACH PARSEN (Genau hinter den Patterns)
     let samples = {};
     let loadedSamplesCount = 0;
 
@@ -120,35 +120,57 @@ export async function loadXmFile(url) {
                 let sh = sampleHeaders[s];
                 if (sh.length > 0) {
                     let is16Bit = (sh.type & 16) !== 0;
-                    let isLoop = (sh.type & 3) !== 0;
                     
-                    let floatData = new Float32Array(is16Bit ? sh.length/2 : sh.length);
+                    let loopType = sh.type & 3; 
+                    let isLoop = loopType !== 0;
+                    let isPingPong = loopType === 2;
+
+                    let rawLength = is16Bit ? sh.length / 2 : sh.length;
+                    let byteData = new Int8Array(rawLength);
                     let old = 0;
                     
                     if (is16Bit) {
-                        for(let j=0; j<sh.length/2; j++) {
+                        for(let j=0; j<rawLength; j++) {
                             let v = view.getInt16(sDataOffset, true);
                             sDataOffset += 2;
                             old = (old + v) & 0xFFFF;
                             let signed = old < 32768 ? old : old - 65536;
-                            floatData[j] = signed / 32768.0;
+                            byteData[j] = Math.round(signed / 256.0);
                         }
                     } else {
-                        for(let j=0; j<sh.length; j++) {
+                        for(let j=0; j<rawLength; j++) {
                             let v = view.getInt8(sDataOffset);
                             sDataOffset += 1;
                             old = (old + v) & 0xFF;
                             let signed = old < 128 ? old : old - 256;
-                            floatData[j] = signed / 128.0;
+                            byteData[j] = signed;
                         }
                     }
                     
+                    let finalData = byteData;
+                    let lStart = is16Bit ? sh.loopStart / 2 : sh.loopStart;
+                    let lLen = isLoop ? (is16Bit ? sh.loopLen / 2 : sh.loopLen) : 0;
+
+                    if (isPingPong && lLen > 0) {
+                        let unrolled = new Int8Array(lStart + lLen * 2);
+                        for (let j = 0; j < lStart + lLen; j++) {
+                            if (j < byteData.length) unrolled[j] = byteData[j];
+                        }
+                        for (let j = 0; j < lLen; j++) {
+                            let srcIdx = lStart + lLen - 1 - j;
+                            if (srcIdx < byteData.length) unrolled[lStart + lLen + j] = byteData[srcIdx];
+                        }
+                        finalData = unrolled;
+                        lLen = lLen * 2; 
+                    }
+
                     samples[`xm_sample_${i}`] = {
-                        data: floatData,
-                        loopStart: is16Bit ? sh.loopStart/2 : sh.loopStart,
-                        loopLen: isLoop ? (is16Bit ? sh.loopLen/2 : sh.loopLen) : 0,
+                        data: finalData,
+                        loopStart: lStart,
+                        loopLen: lLen,
                         baseVolume: sh.vol,
-                        relNote: sh.relNote
+                        relNote: sh.relNote,
+                        finetune: sh.finetune 
                     };
                     loadedSamplesCount++;
                 }
@@ -165,6 +187,7 @@ export async function loadXmFile(url) {
     return {
         isSequenced: true,
         type: 'XM',
+        linearFreq: linearFreq, // --- NEU GEBUNDEN ---
         songLength: songLength,
         orderTable: orderTable,
         patterns: patterns,

@@ -1,7 +1,7 @@
 // === js/worklets/amiga/paula-worklet.js ===
 // ==========================================
 // MOS TECHNOLOGY PAULA 8364 CHIP EMULATION
-// With ProTracker E0x Filter Modulation & Safe-Cloned Visualizer (4 Channel-Coupled)
+// With Precise Pattern Break Caching, Pattern Delay & Loop Support
 // ==========================================
 
 class StaticRCFilter {
@@ -53,18 +53,44 @@ class PaulaChannel {
         this.repLength = 0; 
         this.phase = 0;     
         this.activeSample = 1; 
+        
+        this.targetPeriod = 0;
+        this.basePeriod = 428;
+        this.currentNote = 0;
+        this.targetNote = 0;
+        
+        this.portamentoSpeed = 0;
+        this.portamentoUpSpeed = 0;
+        this.portamentoDownSpeed = 0;
+        this.volSlideSpeed = 0;
+        this.sampleOffset = 0;
+        
+        this.pan = 0.5;
+        this.vibratoSpeed = 0;
+        this.vibratoDepth = 0;
+        this.vibratoPhase = 0;
+        this.hasVibrato = false;
+        
+        this.lastPlayedSample = 0;
+        
+        // --- NEU: Pattern Loop State ---
+        this.patternLoopRow = 0;
+        this.patternLoopCount = 0;
     }
 
     trigger(data, loopStart, loopLen) {
         this.data = data;
         this.pointer = 0;
-        this.length = data.length;
         this.phase = 0;
         
         if (loopLen > 2) {
+            if (loopStart >= data.length) loopStart = 0;
+            if (loopStart + loopLen > data.length) loopLen = data.length - loopStart;
+            this.length = loopStart + loopLen;
             this.repPointer = loopStart;
             this.repLength = loopLen;
         } else {
+            this.length = data.length;
             this.repPointer = -1; 
             this.repLength = 0;
         }
@@ -92,12 +118,14 @@ class PaulaChannel {
 
         if (!this.data) return 0;
         
-        let rawByte = this.data[Math.floor(this.pointer)];
-        if (isNaN(rawByte)) rawByte = 0; 
+        let idx = Math.floor(this.pointer);
+        if (idx >= this.data.length) idx = this.data.length - 1;
+        if (idx < 0) idx = 0;
+
+        let rawByte = this.data[idx];
+        let vol6 = Math.round(this.vol); 
         
-        let sample8 = Math.round(rawByte * 127.0); 
-        let vol6 = Math.round(this.vol);
-        return (sample8 * vol6) / 8128.0; 
+        return (rawByte * vol6) / 8128.0; 
     }
 }
 
@@ -113,12 +141,12 @@ class PaulaProcessor extends AudioWorkletProcessor {
         
         this.samples = {}; 
         this.isPlaying = false;
-
         this.visualView = new Float32Array(40);
 
-        // Sequenzer Engine Variablen
         this.isSequenced = false;
         this.seqType = 'MOD';
+        this.linearFreq = false;
+        
         this.songLength = 0;
         this.orderTable = null;
         this.patterns = null;
@@ -130,31 +158,30 @@ class PaulaProcessor extends AudioWorkletProcessor {
         this.currentRow = 0;
         this.currentTick = 0;
         this.samplesUntilNextTick = 0;
-
-        // Legacy Fallback Variablen
-        this.trackData = null;
-        this.currentFrame = 0;
-        this.sampleCounter = 0;
+        
+        // --- NEU: Globale Tracker-State Caches für Transitions ---
+        this.patternDelay = 0;
+        this.breakPending = false;
+        this.breakOrder = 0;
+        this.breakRow = 0;
 
         this.staticL = new StaticRCFilter(sampleRate);
         this.staticR = new StaticRCFilter(sampleRate);
         this.ledL = new AmigaLEDFilter(sampleRate);
         this.ledR = new AmigaLEDFilter(sampleRate);
         this.ledFilterOn = true; 
+        this.filterModeState = 0; 
 
         this.port.onmessage = (e) => {
             const msg = e.data;
             if (msg.type === 'UPLOAD_SAMPLE') {
-                if (msg.data && msg.data.data instanceof Float32Array) {
+                if (msg.data && msg.data.data instanceof Int8Array) {
                     this.samples[msg.name] = msg.data;
-                } else {
-                    this.samples[msg.name] = {
-                        data: msg.data,
-                        loopStart: msg.loopStart || 0,
-                        loopLen: msg.loopLen !== undefined ? msg.loopLen : (msg.name === 'bass' || msg.name === 'chord' ? msg.data.length : 0)
-                    };
                 }
             } else if (msg.type === 'PLAY_TRACK') {
+                const isXM = msg.track && msg.track.type === 'XM';
+                this.linearFreq = msg.track ? (msg.track.linearFreq || false) : false;
+                
                 for (let i = 0; i < 64; i++) {
                     this.channels[i].data = null;
                     this.channels[i].vol = 0;
@@ -165,7 +192,35 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     this.channels[i].repLength = 0;
                     this.channels[i].phase = 0;
                     this.channels[i].activeSample = 1;
+                    
+                    this.channels[i].targetPeriod = 0;
+                    this.channels[i].basePeriod = 428;
+                    this.channels[i].currentNote = 0;
+                    this.channels[i].targetNote = 0;
+                    
+                    this.channels[i].portamentoSpeed = 0;
+                    this.channels[i].portamentoUpSpeed = 0;
+                    this.channels[i].portamentoDownSpeed = 0;
+                    this.channels[i].volSlideSpeed = 0;
+                    this.channels[i].sampleOffset = 0;
+                    
+                    this.channels[i].patternLoopRow = 0;
+                    this.channels[i].patternLoopCount = 0;
+                    
+                    this.channels[i].lastPlayedSample = 0;
+                    
+                    if (isXM) this.channels[i].pan = 0.5;
+                    else {
+                        const panMod = i % 4;
+                        this.channels[i].pan = (panMod === 0 || panMod === 3) ? 0.0 : 1.0;
+                    }
+                    this.channels[i].vibratoSpeed = 0;
+                    this.channels[i].vibratoDepth = 0;
+                    this.channels[i].vibratoPhase = 0;
+                    this.channels[i].hasVibrato = false;
                 }
+
+                this.filterModeState = 0;
 
                 if (msg.track && msg.track.isSequenced) {
                     this.isSequenced = true;
@@ -181,6 +236,8 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     this.currentRow = 0;
                     this.currentTick = 0;
                     this.samplesUntilNextTick = 0;
+                    this.patternDelay = 0;
+                    this.breakPending = false;
                     this.isPlaying = true;
                 } else {
                     this.isSequenced = false;
@@ -207,16 +264,20 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     this.currentOrder = targetOrder % this.songLength;
                     this.currentRow = Math.floor(remainingTicks / this.speed) % 64;
                     this.currentTick = remainingTicks % this.speed;
+                    this.patternDelay = 0;
+                    this.breakPending = false;
                 } else {
                     if (this.trackData) this.currentFrame = msg.frame % this.trackData.length;
                 }
-            } else if (msg.type === 'SET_LED_FILTER') {
-                this.ledFilterOn = msg.enabled;
+            } else if (msg.type === 'CYCLE_FILTER') {
+                this.filterModeState = (this.filterModeState + 1) % 3;
+                if (this.filterModeState === 1) this.ledFilterOn = true; 
+                else if (this.filterModeState === 2) this.ledFilterOn = false; 
             }
         };
     }
 
-    processTrackerTick() {
+    processTrackerTick(overshoot) {
         if (this.currentOrder >= this.songLength) {
             this.currentOrder = 0; 
         }
@@ -227,10 +288,7 @@ class PaulaProcessor extends AudioWorkletProcessor {
 
         const pattern = patternObj.data;
         const numRows = patternObj.numRows;
-
         const rowOffset = this.currentRow * this.numChannels * 6;
-
-        const overshoot = -this.samplesUntilNextTick; 
         const clockTicksPerSample = this.clock / sampleRate;
 
         for (let ch = 0; ch < this.numChannels; ch++) {
@@ -242,114 +300,276 @@ class PaulaProcessor extends AudioWorkletProcessor {
             const param = pattern[cellOffset + 5];
 
             const channel = this.channels[ch];
-
+            
             if (sample > 0) {
                 channel.activeSample = sample;
             }
+            
             const activeSample = channel.activeSample || 1;
             const smpName = this.seqType === 'MOD' ? `mod_sample_${activeSample}` : `xm_sample_${activeSample}`;
             const currentSmpObj = this.samples[smpName];
 
+            const isSampleChange = (sample > 0 && sample !== channel.lastPlayedSample);
+            const isPortamento = (effect === 0x03 || effect === 0x05) && (channel.data !== null) && 
+                                 (this.seqType === 'XM' ? true : !isSampleChange);
+
             if (this.currentTick === 0) {
-                if (sample > 0 && currentSmpObj && currentSmpObj.data) {
-                    channel.trigger(currentSmpObj.data, currentSmpObj.loopStart, currentSmpObj.loopLen);
-                    channel.vol = currentSmpObj.baseVolume; 
-                    channel.pointer = overshoot * (clockTicksPerSample / channel.per);
+                const hasNote = (period > 0 && period !== 97);
+                if (period === 97) channel.vol = 0;
+
+                if (hasNote) {
+                    let calculatedPeriod = period;
+                    let actualNote = 0;
+
+                    if (this.seqType === 'XM') {
+                        const relNote = currentSmpObj ? (currentSmpObj.relNote || 0) : 0;
+                        const finetune = currentSmpObj ? (currentSmpObj.finetune || 0) : 0;
+                        actualNote = period + relNote + (finetune / 128.0);
+                        const clampedNote = Math.min(96, Math.max(1, actualNote));
+                        calculatedPeriod = Math.round(428.0 * Math.pow(2.0, (49 - clampedNote) / 12.0));
+                    }
+
+                    if (isPortamento) {
+                        channel.targetPeriod = calculatedPeriod;
+                        channel.targetNote = actualNote;
+                    } else {
+                        channel.per = calculatedPeriod;
+                        channel.basePeriod = calculatedPeriod;
+                        channel.targetPeriod = 0;
+                        channel.currentNote = actualNote;
+                        channel.targetNote = 0;
+                    }
                 }
 
-                if (period > 0) {
-                    if (this.seqType === 'MOD') {
-                        channel.per = period;
-                    } else { 
-                        if (period === 0xFFFF || period === 97) {
-                            channel.vol = 0; 
-                        } else {
-                            const relNote = currentSmpObj ? (currentSmpObj.relNote || 0) : 0;
-                            const actualNote = period + relNote;
-                            const clampedNote = Math.min(96, Math.max(1, actualNote));
-                            channel.per = Math.round(428.0 * Math.pow(2.0, (37 - clampedNote) / 12.0));
+                if (hasNote && currentSmpObj && currentSmpObj.data) {
+                    if (!isPortamento) {
+                        channel.trigger(currentSmpObj.data, currentSmpObj.loopStart, currentSmpObj.loopLen);
+                        channel.phase = overshoot * (clockTicksPerSample / channel.per);
+                        
+                        if (effect === 0x09) {
+                            if (param > 0) channel.sampleOffset = param * 256;
+                            channel.pointer = channel.sampleOffset;
                         }
                     }
-                    if (period !== 0xFFFF && period !== 97) {
-                        channel.phase = overshoot * (clockTicksPerSample / channel.per);
+                    if (sample > 0) {
+                        channel.lastPlayedSample = sample;
                     }
+                }
+
+                if (sample > 0 && currentSmpObj) {
+                    channel.vol = currentSmpObj.baseVolume; 
                 }
 
                 if (volume !== 0xFF) {
                     channel.vol = volume; 
                 }
 
+                if (effect !== 0x04 && effect !== 0x06) {
+                    channel.hasVibrato = false;
+                }
+
+                // --- TICK 0: EFFECTS ---
                 switch (effect) {
+                    case 0x01: if (param > 0) channel.portamentoUpSpeed = param; break;
+                    case 0x02: if (param > 0) channel.portamentoDownSpeed = param; break;
+                    case 0x03: if (param > 0) channel.portamentoSpeed = param; break;
+                    case 0x04: 
+                        if (param > 0) {
+                            if ((param >> 4) > 0) channel.vibratoSpeed = (param >> 4) & 0x0F;
+                            if ((param & 0x0F) > 0) channel.vibratoDepth = param & 0x0F;
+                        }
+                        channel.hasVibrato = true;
+                        break;
+                    case 0x05:
+                    case 0x0A: 
+                        if (param > 0) channel.volSlideSpeed = param; 
+                        break;
+                    case 0x06: 
+                        if (param > 0) channel.volSlideSpeed = param;
+                        channel.hasVibrato = true;
+                        break;
+                    case 0x08: 
+                        channel.pan = param / 255.0;
+                        break;
                     case 0x0C: 
                         channel.vol = param > 64 ? 64 : param;
                         break;
                     case 0x0F: 
                         if (param > 0) {
-                            if (param < 32) {
-                                this.speed = param;
-                            } else {
-                                this.bpm = param;
-                            }
+                            if (param < 32) this.speed = param;
+                            else this.bpm = param;
                         }
                         break;
+                        
+                    // --- NEU: SAFELY CACHED JUMPS ---
                     case 0x0B: 
-                        this.currentOrder = param;
-                        this.currentRow = 0;
-                        this.currentTick = -1; 
+                        this.breakOrder = param;
+                        this.breakRow = 0;
+                        this.breakPending = true;
                         break;
                     case 0x0D: 
-                        const targetRow = ((param >> 4) * 10) + (param & 0x0F);
-                        this.currentRow = targetRow < numRows ? targetRow : 0;
-                        this.currentOrder++;
-                        this.currentTick = -1;
+                        this.breakOrder = this.currentOrder + 1;
+                        this.breakRow = ((param >> 4) * 10) + (param & 0x0F);
+                        this.breakPending = true;
                         break;
+                        
                     case 0x0E:
-                        if ((param & 0xF0) === 0x00) { 
-                            this.ledFilterOn = (param & 0x0F) === 0; 
+                        const subEffect = param >> 4;
+                        const subParam = param & 0x0F;
+                        if (subEffect === 0x00) { 
+                            if (this.filterModeState === 0) this.ledFilterOn = (subParam === 0); 
+                        } else if (subEffect === 0x0A) { 
+                            channel.vol = Math.min(64, channel.vol + subParam);
+                        } else if (subEffect === 0x0B) { 
+                            channel.vol = Math.max(0, channel.vol - subParam);
+                        } else if (subEffect === 0x01) { 
+                            if (this.seqType === 'XM' && this.linearFreq) {
+                                channel.currentNote = Math.min(96, channel.currentNote + (subParam / 16.0));
+                                channel.per = Math.round(428.0 * Math.pow(2.0, (49 - channel.currentNote) / 12.0));
+                            } else if (channel.per > 0) {
+                                channel.per = Math.max(113, channel.per - subParam);
+                            }
+                        } else if (subEffect === 0x02) { 
+                            if (this.seqType === 'XM' && this.linearFreq) {
+                                channel.currentNote = Math.max(1, channel.currentNote - (subParam / 16.0));
+                                channel.per = Math.round(428.0 * Math.pow(2.0, (49 - channel.currentNote) / 12.0));
+                            } else if (channel.per > 0) {
+                                channel.per = Math.min(856, channel.per + subParam);
+                            }
+                        }
+                        // --- NEU: PATTERN DELAY (EEx) ---
+                        else if (subEffect === 0x0E) {
+                            this.patternDelay = subParam;
+                        }
+                        // --- NEU: PATTERN LOOP (E6x) ---
+                        else if (subEffect === 0x06) {
+                            if (subParam === 0) {
+                                channel.patternLoopRow = this.currentRow;
+                            } else {
+                                if (channel.patternLoopCount === 0) {
+                                    channel.patternLoopCount = subParam;
+                                } else {
+                                    channel.patternLoopCount--;
+                                }
+                                if (channel.patternLoopCount > 0) {
+                                    this.breakOrder = this.currentOrder;
+                                    this.breakRow = channel.patternLoopRow;
+                                    this.breakPending = true;
+                                }
+                            }
                         }
                         break;
                 }
             } else {
+                // --- TICK > 0: EFFECTS ---
                 switch (effect) {
                     case 0x00: 
                         if (param > 0 && channel.per > 0) {
                             const arpOffsets = [0, (param >> 4) & 0x0F, param & 0x0F];
                             const currentOffset = arpOffsets[this.currentTick % 3];
-                            channel.per = period * Math.pow(0.9438, currentOffset);
+                            if (this.seqType === 'XM' && this.linearFreq) {
+                                const arpNote = channel.currentNote + currentOffset; 
+                                const clampedNote = Math.min(96, Math.max(1, arpNote));
+                                channel.per = Math.round(428.0 * Math.pow(2.0, (49 - clampedNote) / 12.0));
+                            } else {
+                                const base = (period > 0 && period !== 97) ? period : channel.basePeriod;
+                                channel.per = base * Math.pow(0.9438, currentOffset);
+                            }
                         }
                         break;
                     case 0x01: 
-                        if (channel.per > 0) {
-                            channel.per = Math.max(113, channel.per - param); 
+                        if (this.seqType === 'XM' && this.linearFreq) {
+                            channel.currentNote = Math.min(96, channel.currentNote + (channel.portamentoUpSpeed / 16.0));
+                            channel.per = Math.round(428.0 * Math.pow(2.0, (49 - channel.currentNote) / 12.0));
+                        } else if (channel.per > 0) {
+                            channel.per = Math.max(113, channel.per - channel.portamentoUpSpeed); 
                         }
                         break;
                     case 0x02: 
-                        if (channel.per > 0) {
-                            channel.per = Math.min(856, channel.per + param); 
+                        if (this.seqType === 'XM' && this.linearFreq) {
+                            channel.currentNote = Math.max(1, channel.currentNote - (channel.portamentoDownSpeed / 16.0));
+                            channel.per = Math.round(428.0 * Math.pow(2.0, (49 - channel.currentNote) / 12.0));
+                        } else if (channel.per > 0) {
+                            channel.per = Math.min(856, channel.per + channel.portamentoDownSpeed); 
+                        }
+                        break;
+                    case 0x03:
+                    case 0x05:
+                        if (this.seqType === 'XM' && this.linearFreq) {
+                            if (channel.targetNote > 0 && channel.currentNote !== channel.targetNote) {
+                                const slideAmount = channel.portamentoSpeed / 16.0;
+                                if (channel.currentNote < channel.targetNote) {
+                                    channel.currentNote = Math.min(channel.targetNote, channel.currentNote + slideAmount);
+                                } else {
+                                    channel.currentNote = Math.max(channel.targetNote, channel.currentNote - slideAmount);
+                                }
+                                const clampedNote = Math.min(96, Math.max(1, channel.currentNote));
+                                channel.per = Math.round(428.0 * Math.pow(2.0, (49 - clampedNote) / 12.0));
+                            }
+                        } else {
+                            if (channel.targetPeriod > 0 && channel.per !== channel.targetPeriod) {
+                                if (channel.per < channel.targetPeriod) {
+                                    channel.per = Math.min(channel.targetPeriod, channel.per + channel.portamentoSpeed);
+                                } else {
+                                    channel.per = Math.max(channel.targetPeriod, channel.per - channel.portamentoSpeed);
+                                }
+                            }
+                        }
+                        if (effect === 0x05) {
+                            const slideUp = (channel.volSlideSpeed >> 4) & 0x0F;
+                            const slideDown = channel.volSlideSpeed & 0x0F;
+                            if (slideUp > 0) channel.vol = Math.min(64, channel.vol + slideUp);
+                            else if (slideDown > 0) channel.vol = Math.max(0, channel.vol - slideDown);
+                        }
+                        break;
+                    case 0x04: 
+                    case 0x06: 
+                        if (channel.hasVibrato) {
+                            channel.vibratoPhase = (channel.vibratoPhase + channel.vibratoSpeed) & 63;
+                            const vibSine = Math.sin(channel.vibratoPhase * (Math.PI / 32));
+                            
+                            if (this.seqType === 'XM' && this.linearFreq) {
+                                const vibOffsetNotes = vibSine * (channel.vibratoDepth / 16.0);
+                                const clampedNote = Math.min(96, Math.max(1, channel.currentNote + vibOffsetNotes));
+                                channel.per = Math.round(428.0 * Math.pow(2.0, (49 - clampedNote) / 12.0));
+                            } else {
+                                const vibOffset = vibSine * channel.vibratoDepth * 2.5; 
+                                channel.per = Math.max(113, Math.min(856, Math.round(channel.basePeriod + vibOffset)));
+                            }
+                        }
+                        if (effect === 0x06) {
+                            const slideUp = (channel.volSlideSpeed >> 4) & 0x0F;
+                            const slideDown = channel.volSlideSpeed & 0x0F;
+                            if (slideUp > 0) channel.vol = Math.min(64, channel.vol + slideUp);
+                            else if (slideDown > 0) channel.vol = Math.max(0, channel.vol - slideDown);
                         }
                         break;
                     case 0x0A: 
-                        if (param > 0) {
-                            const slideUp = (param >> 4) & 0x0F;
-                            const slideDown = param & 0x0F;
-                            if (slideUp > 0) {
-                                channel.vol = Math.min(64, channel.vol + slideUp);
-                            } else if (slideDown > 0) {
-                                channel.vol = Math.max(0, channel.vol - slideDown);
-                            }
-                        }
+                        const slideUp = (channel.volSlideSpeed >> 4) & 0x0F;
+                        const slideDown = channel.volSlideSpeed & 0x0F;
+                        if (slideUp > 0) channel.vol = Math.min(64, channel.vol + slideUp);
+                        else if (slideDown > 0) channel.vol = Math.max(0, channel.vol - slideDown);
                         break;
                 }
             }
         }
 
+        // --- ROW ADVANCE & PATTERN DELAY LOGIC ---
         this.currentTick++;
-        if (this.currentTick >= this.speed) {
+        if (this.currentTick >= this.speed * (this.patternDelay + 1)) {
             this.currentTick = 0;
-            this.currentRow++;
-            if (this.currentRow >= numRows) {
-                this.currentRow = 0;
-                this.currentOrder++;
+            this.patternDelay = 0;
+            
+            if (this.breakPending) {
+                this.currentOrder = this.breakOrder;
+                this.currentRow = this.breakRow;
+                this.breakPending = false;
+            } else {
+                this.currentRow++;
+                if (this.currentRow >= numRows) {
+                    this.currentRow = 0;
+                    this.currentOrder++;
+                }
             }
         }
     }
@@ -371,10 +591,14 @@ class PaulaProcessor extends AudioWorkletProcessor {
                 if (this.isSequenced) {
                     this.samplesUntilNextTick--;
                     if (this.samplesUntilNextTick <= 0) {
+                        const overshoot = -this.samplesUntilNextTick; 
+                        
+                        // --- NEU: Erst den Tick abarbeiten, damit 0x0F sofort wirkt! ---
+                        this.processTrackerTick(overshoot);
+                        
+                        // Danach die Wartedauer mit der ggf. frischen BPM kalkulieren
                         const samplesPerTick = (2.5 / this.bpm) * sampleRate;
                         this.samplesUntilNextTick += samplesPerTick;
-                        
-                        this.processTrackerTick();
                     }
                 } else {
                     this.sampleCounter--;
@@ -392,7 +616,6 @@ class PaulaProcessor extends AudioWorkletProcessor {
                                     }
                                 }
                                 if (cmd.per !== undefined) ch.per = cmd.per;
-                                // In der Legacy-Loop ebenfalls den Kanal-Volumenzug sichern
                                 if (cmd.vol !== undefined) ch.vol = cmd.vol; 
                             }
                         }
@@ -406,8 +629,9 @@ class PaulaProcessor extends AudioWorkletProcessor {
             for (let c = 0; c < this.numChannels; c++) {
                 let sampleVal = this.channels[c].step(clockTicksPerSample);
                 if (sampleVal !== 0) {
-                    if ((c % 4) === 0 || (c % 4) === 3) mixedL += sampleVal; 
-                    else mixedR += sampleVal; 
+                    const pan = this.channels[c].pan;
+                    mixedL += sampleVal * Math.cos(pan * Math.PI * 0.5); 
+                    mixedR += sampleVal * Math.sin(pan * Math.PI * 0.5); 
                 }
             }
             
@@ -454,14 +678,14 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     view[4 + offset + 6] = Math.round(ch.vol) & 0xFF;
                 }
 
-                // Amiga LED Status im Puffer übertragen (Index 33)
                 view[33] = this.ledFilterOn ? 1.0 : 0.0;
 
-                // === KANALLAUTSTÄRKEN DER ERSTEN 4 PAULA DMA KANÄLE ÜBERTRAGEN ===
                 for (let c = 0; c < 4; c++) {
                     let ch = this.channels[c];
                     view[34 + c] = ch.data ? (ch.vol / 64.0) : 0.0;
                 }
+
+                view[38] = this.filterModeState;
 
                 this.port.postMessage(view);
             }
