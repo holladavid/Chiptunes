@@ -53,6 +53,9 @@ class PaulaChannel {
         this.repLength = 0; 
         this.phase = 0;     
         this.activeSample = 1; 
+        this.targetPeriod = 0;
+        this.portamentoSpeed = 0;
+        this.basePeriod = 428;
     }
 
     trigger(data, loopStart, loopLen) {
@@ -167,6 +170,9 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     this.channels[i].repLength = 0;
                     this.channels[i].phase = 0;
                     this.channels[i].activeSample = 1;
+                    this.channels[i].targetPeriod = 0;
+                    this.channels[i].portamentoSpeed = 0;
+                    this.channels[i].basePeriod = 428;
                 }
 
                 // Bei jedem neuen Track den Modus zurück auf AUTO stellen
@@ -253,6 +259,11 @@ class PaulaProcessor extends AudioWorkletProcessor {
             const param = pattern[cellOffset + 5];
 
             const channel = this.channels[ch];
+            
+            // Portamento darf nur greifen, wenn der Kanal bereits aktiv ein Sample abspielt.
+            // Ist der Kanal stumm (channel.data === null), erzwingen wir ein normales Note-Triggering,
+            // um den Attack/Anschlag des Instruments nicht zu verschlucken.
+            const isPortamento = (effect === 0x03 || effect === 0x05) && (channel.data !== null);
 
             if (sample > 0) {
                 channel.activeSample = sample;
@@ -263,14 +274,22 @@ class PaulaProcessor extends AudioWorkletProcessor {
 
             if (this.currentTick === 0) {
                 if (sample > 0 && currentSmpObj && currentSmpObj.data) {
-                    channel.trigger(currentSmpObj.data, currentSmpObj.loopStart, currentSmpObj.loopLen);
+                    if (!isPortamento) {
+                        channel.trigger(currentSmpObj.data, currentSmpObj.loopStart, currentSmpObj.loopLen);
+                        channel.pointer = overshoot * (clockTicksPerSample / channel.per);
+                    }
                     channel.vol = currentSmpObj.baseVolume; 
-                    channel.pointer = overshoot * (clockTicksPerSample / channel.per);
                 }
 
                 if (period > 0) {
                     if (this.seqType === 'MOD') {
-                        channel.per = period;
+                        if (isPortamento) {
+                            channel.targetPeriod = period;
+                        } else {
+                            channel.per = period;
+                            channel.basePeriod = period;
+                            channel.targetPeriod = 0;
+                        }
                     } else { 
                         if (period === 0xFFFF || period === 97) {
                             channel.vol = 0; 
@@ -278,10 +297,17 @@ class PaulaProcessor extends AudioWorkletProcessor {
                             const relNote = currentSmpObj ? (currentSmpObj.relNote || 0) : 0;
                             const actualNote = period + relNote;
                             const clampedNote = Math.min(96, Math.max(1, actualNote));
-                            channel.per = Math.round(428.0 * Math.pow(2.0, (37 - clampedNote) / 12.0));
+                            const calculatedPeriod = Math.round(428.0 * Math.pow(2.0, (37 - clampedNote) / 12.0));
+                            if (isPortamento) {
+                                channel.targetPeriod = calculatedPeriod;
+                            } else {
+                                channel.per = calculatedPeriod;
+                                channel.basePeriod = calculatedPeriod;
+                                channel.targetPeriod = 0;
+                            }
                         }
                     }
-                    if (period !== 0xFFFF && period !== 97) {
+                    if (period !== 0xFFFF && period !== 97 && !isPortamento) {
                         channel.phase = overshoot * (clockTicksPerSample / channel.per);
                     }
                 }
@@ -291,6 +317,11 @@ class PaulaProcessor extends AudioWorkletProcessor {
                 }
 
                 switch (effect) {
+                    case 0x03:
+                        if (param > 0) {
+                            channel.portamentoSpeed = param;
+                        }
+                        break;
                     case 0x0C: 
                         channel.vol = param > 64 ? 64 : param;
                         break;
@@ -329,7 +360,8 @@ class PaulaProcessor extends AudioWorkletProcessor {
                         if (param > 0 && channel.per > 0) {
                             const arpOffsets = [0, (param >> 4) & 0x0F, param & 0x0F];
                             const currentOffset = arpOffsets[this.currentTick % 3];
-                            channel.per = period * Math.pow(0.9438, currentOffset);
+                            const base = (period > 0) ? period : channel.basePeriod;
+                            channel.per = base * Math.pow(0.9438, currentOffset);
                         }
                         break;
                     case 0x01: 
@@ -340,6 +372,25 @@ class PaulaProcessor extends AudioWorkletProcessor {
                     case 0x02: 
                         if (channel.per > 0) {
                             channel.per = Math.min(856, channel.per + param); 
+                        }
+                        break;
+                    case 0x03:
+                    case 0x05:
+                        if (channel.targetPeriod > 0 && channel.per !== channel.targetPeriod) {
+                            if (channel.per < channel.targetPeriod) {
+                                channel.per = Math.min(channel.targetPeriod, channel.per + channel.portamentoSpeed);
+                            } else {
+                                channel.per = Math.max(channel.targetPeriod, channel.per - channel.portamentoSpeed);
+                            }
+                        }
+                        if (effect === 0x05 && param > 0) {
+                            const slideUp = (param >> 4) & 0x0F;
+                            const slideDown = param & 0x0F;
+                            if (slideUp > 0) {
+                                channel.vol = Math.min(64, channel.vol + slideUp);
+                            } else if (slideDown > 0) {
+                                channel.vol = Math.max(0, channel.vol - slideDown);
+                            }
                         }
                         break;
                     case 0x0A: 
