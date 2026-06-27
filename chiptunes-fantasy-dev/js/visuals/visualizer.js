@@ -1,7 +1,7 @@
 // === js/visuals/visualizer.js ===
 // =========================================================
 // HIGH-PERFORMANCE RETROWAVE VISUALIZER MODULE
-// Optimized Phosphor Trail Persistence & Clean Copperbar Gradients
+// Optimized Phosphor Trail, Clean Copperbars & Fullscreen Clamping
 // =========================================================
 
 export function initVisuals(stateGetters, callbacks) {
@@ -18,10 +18,26 @@ export function initVisuals(stateGetters, callbacks) {
     let oscIndex = 0;
 
     function resizeCanvas() {
-        const newWidth = canvas.clientWidth;
-        const newHeight = canvas.clientHeight;
+        const clientWidth = canvas.clientWidth;
+        const clientHeight = canvas.clientHeight;
         
-        if (canvas.width !== newWidth) {
+        // --- RETRO-RESOLUTION CLAMPING ---
+        // Um ein "Schmelzen" der GPU auf 4K/Retina-Displays zu verhindern und
+        // die Frequenz-Geschwindigkeit des Oszilloskops auf allen Bildschirmen
+        // absolut einheitlich zu halten, deckeln wir die maximale interne 
+        // Renderbreite auf 1280px (720p). Das heraufskalierte CSS-Bild erzeugt
+        // einen herrlich authentischen Röhren-Unschärfe-Look!
+        const maxResolutionWidth = 1280;
+        let scale = 1.0;
+        
+        if (clientWidth > maxResolutionWidth) {
+            scale = maxResolutionWidth / clientWidth;
+        }
+        
+        const newWidth = Math.floor(clientWidth * scale);
+        const newHeight = Math.floor(clientHeight * scale);
+        
+        if (canvas.width !== newWidth || canvas.height !== newHeight) {
             const oldHistory = oscHistory;
             const oldLen = oldHistory ? oldHistory.length : 0;
             
@@ -39,8 +55,6 @@ export function initVisuals(stateGetters, callbacks) {
                 }
                 oscIndex = copyLen % historyLength;
             }
-        } else {
-            canvas.height = newHeight; 
         }
     }
     
@@ -53,7 +67,6 @@ export function initVisuals(stateGetters, callbacks) {
     const barCount = 48; 
     const peaks = new Array(barCount).fill(0); 
 
-    // Zeichnet das gestrichelte Vektor-Raster eines klassischen Labor-Oszilloskops
     function drawReticle() {
         const w = canvas.width;
         const h = canvas.height;
@@ -63,13 +76,11 @@ export function initVisuals(stateGetters, callbacks) {
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         
-        // Horizontale Mittellinie
         ctx.beginPath();
         ctx.moveTo(0, midY);
         ctx.lineTo(w, midY);
         ctx.stroke();
         
-        // Vertikale Raster-Teilungen
         const divisions = 10;
         const stepX = w / divisions;
         ctx.beginPath();
@@ -78,21 +89,17 @@ export function initVisuals(stateGetters, callbacks) {
             ctx.lineTo(i * stepX, h);
         }
         ctx.stroke();
-        ctx.setLineDash([]); // Zurücksetzen für nachfolgende Zeichnungen
+        ctx.setLineDash([]); 
     }
 
-    // Erzeugt einen plastischen Amiga-Kupferbalken (Cylindrical Metall-Look)
     function drawCopperbar(y, height, volume, colorStart, colorEnd) {
         if (volume <= 0.01) return;
         const w = canvas.width;
         
-        // Metallischer 3D-Zylinderverlauf
-        // NEU: Äußere Kanten auf soliden Schwarzwert (#000000) gesetzt,
-        // um Farb-Akkumulationen im additiven screen-Mischmodus zu verhindern.
         const grad = ctx.createLinearGradient(0, y, 0, y + height);
         grad.addColorStop(0.0, '#000000');
         grad.addColorStop(0.18, colorStart);
-        grad.addColorStop(0.5, '#ffffff'); // Heller Chrom-Spiegelpunkt in der Mitte
+        grad.addColorStop(0.5, '#ffffff'); 
         grad.addColorStop(0.82, colorEnd);
         grad.addColorStop(1.0, '#000000');
         
@@ -101,7 +108,6 @@ export function initVisuals(stateGetters, callbacks) {
     }
 
     function draw() {
-        // GPU/CPU Entlastung im ECO-Modus
         if (stateGetters.getEcoMode()) {
             callbacks.updateTimelineUI(); 
             requestAnimationFrame(draw);
@@ -110,10 +116,6 @@ export function initVisuals(stateGetters, callbacks) {
 
         const t = (performance.now() - startTime) * 0.001; 
         
-        // --- PHOSPHOR TRAIL PERSISTENCE (Motion Blur) ---
-        // KORREKTUR: Alpha-Wert von 0.18 auf 0.38 angehoben. 
-        // Dies verkürzt die Abklingzeit des Nachleuchtens im Vollbild massiv, 
-        // wodurch die Copperbars extrem knackig und reaktiv bouncen.
         ctx.fillStyle = 'rgba(0, 0, 0, 0.38)'; 
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
@@ -121,10 +123,8 @@ export function initVisuals(stateGetters, callbacks) {
         const isAtari = document.body.classList.contains('theme-atari');
         const lineColor = isAtari ? '#55ff55' : isAmiga ? '#ff8800' : '#6c5eb5';
         
-        // 1. Oszilloskop-Raster zeichnen
         drawReticle();
 
-        // 2. Additive 3D Copperbars
         const channelVolumes = stateGetters.getChannelVolumes ? stateGetters.getChannelVolumes() : [0, 0, 0, 0];
         const numBars = isAmiga ? 4 : 3;
 
@@ -140,17 +140,16 @@ export function initVisuals(stateGetters, callbacks) {
         const baseThickness = [18, 14, 12, 10]; 
         const heightWeights = [0.28, 0.33, 0.22, 0.25];
 
-        ctx.globalCompositeOperation = "screen"; // Additiver Mix für intensiveren Glow
+        ctx.globalCompositeOperation = "screen"; 
         for (let c = 0; c < numBars; c++) {
             let vol = channelVolumes[c] || 0;
-            let punch = vol * 28; // Dynamischer Bass-Bounce
+            let punch = vol * 28; 
             
             let yCenter = (canvas.height / 2) + Math.sin(t * sinTimes[c] + sinOffsets[c]) * (canvas.height * heightWeights[c]);
             drawCopperbar(yCenter - (baseThickness[c] + punch)/2, (baseThickness[c] + punch), vol, pals[c][0], pals[c][1]);
         }
         ctx.globalCompositeOperation = "source-over";
 
-        // 3. Das Oszilloskop (Vektor-Kurve mit CRT-Glow)
         const currentOscValue = stateGetters.getCurrentOscValue();
         const trackData = stateGetters.getTrackData();
         const trackLength = trackData ? (trackData.length || 0) : 0;
@@ -162,7 +161,6 @@ export function initVisuals(stateGetters, callbacks) {
         ctx.lineWidth = 2.5;
         ctx.strokeStyle = lineColor;
         
-        // Selektiver phosphor-artiger Glow für das Oszilloskop
         ctx.shadowColor = lineColor;
         ctx.shadowBlur = 10;
 
@@ -185,9 +183,8 @@ export function initVisuals(stateGetters, callbacks) {
         if (!isFirstPoint) {
             ctx.stroke();
         }
-        ctx.shadowBlur = 0; // Sofort ausschalten für maximale Performance beim restlichen Rendern
+        ctx.shadowBlur = 0; 
 
-        // 4. Spectrum Analyzer (Winamp-Aesthetic)
         const activeAnalyser = stateGetters.getAnalyserNode();
         const isPlaying = stateGetters.getIsPlaying();
         const audioCtx = stateGetters.getAudioContext();
@@ -221,12 +218,10 @@ export function initVisuals(stateGetters, callbacks) {
                 if (barHeight > peaks[i]) peaks[i] = barHeight; 
                 else { peaks[i] -= 1.2; if (peaks[i] < 0) peaks[i] = 0; }
                 
-                // Balken zeichnen
                 ctx.fillStyle = lineColor; 
                 ctx.globalAlpha = 0.6;
                 ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
                 
-                // Schwebende Peak-Punkte (Classic Player Look)
                 if (peaks[i] > 2) {
                     ctx.globalAlpha = 1.0; 
                     ctx.fillStyle = '#ffffff';
