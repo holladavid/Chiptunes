@@ -1,7 +1,7 @@
 // === js/worklets/c64/sid-worklet.js ===
 // =========================================================
 // MOS TECHNOLOGY SID 6581 AUDIO WORKLET PROCESSOR
-// High-Fidelity Cycle-Exact CPU Lockstep Mischer & Bilinear SVF Filter
+// With High-Fidelity Bilinear Trapezoidal SVF Filter (3 Channel-Coupled)
 // =========================================================
 
 import { CPU6502 } from '../lib/cpu6502.js';
@@ -57,6 +57,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                 
                 this.useCiaTimer = ((msg.speed >> songIndex) & 1) !== 0;
                 this.cpu.jsr(this.initAddress); 
+                this.isIrqRoutine = false;
 
                 if (this.playAddress === 0) {
                     this.playAddress = this.cpu.read(0x0314) | (this.cpu.read(0x0315) << 8); 
@@ -71,7 +72,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                     }
                 }
 
-                // Initial-Reset der Mischer-Verteiler (Temperatur bleibt persistent!)
                 this.cycleAccumulator = 0.0;
                 this.vblankCycles = 19705;
                 this.cpu.isIdle = true;
@@ -135,8 +135,14 @@ class SIDProcessor extends AudioWorkletProcessor {
                         
                         if (this.cpu.isIdle) {
                             this.cpu.isIdle = false;
-                            this.cpu.push(0xFF);
-                            this.cpu.push(0xFE);
+                            if (this.isIrqRoutine) {
+                                this.cpu.push(0xFF);
+                                this.cpu.push(0xFE);
+                                this.cpu.push(this.cpu.p); 
+                            } else {
+                                this.cpu.push(0xFF);
+                                this.cpu.push(0xFE);
+                            }
                             this.cpu.pc = this.playAddress;
                             this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
                         }
@@ -181,7 +187,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                 let voiceOut = this.sid.synthesizeVoice(v, this.clock, sampleRate, cyclesToRun);
                 
                 if (this.sid.regs[23] & (1 << v)) {
-                    // 1. Nichtlineare Grenzfrequenz (Kondensator-Modell)
                     let cutoffReg = (this.sid.regs[21] & 7) | (this.sid.regs[22] << 3);
                     let norm = cutoffReg / 2047.0;
                     let baseCutoff = 220.0 + Math.pow(norm, 1.4) * 11500.0;
@@ -191,7 +196,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                     if (activeCutoff < 30) activeCutoff = 30;
                     if (activeCutoff > 16000) activeCutoff = 16000;
 
-                    // 2. Trapezoidale Integrationskoeffizienten (Bilinear Transform)
                     let g = Math.tan(Math.PI * activeCutoff / sampleRate);
                     
                     let resReg = this.sid.regs[23] >> 4;
@@ -200,18 +204,16 @@ class SIDProcessor extends AudioWorkletProcessor {
                     let thermalDamp = 1.0 + (this.temperature - 55.0) * 0.0015;
                     q = Math.min(1.0, Math.max(0.04, q * thermalDamp));
 
-                    // 3. ZERO-DELAY BILINEAR TRANSFORM SVF SOLVER
-                    // Berechnet die Integratoren vollständig sauber ohne un-definierte Variablen (f/hp/bp)
-                    let h = voiceOut - this.sid.filterLow;
-                    let hp = (h - q * this.sid.filterBand) / (1.0 + g * (g + q));
-                    let bp = this.sid.filterBand + g * hp;
-                    let lp = this.sid.filterLow + g * bp;
+                    let saturatedBand = this.sid.filterBand / (1.0 + Math.abs(this.sid.filterBand));
+                    this.sid.filterLow += f * saturatedBand;
                     
-                    // Filter-Zustände aktualisieren (inklusive schnellem algebraischen Sättigungsbegrenzer)
-                    this.sid.filterLow = lp;
-                    this.sid.filterBand = bp / (1.0 + Math.abs(bp) * 0.15); // Sanfte analoge Resonanzbegrenzung
+                    let feedback = this.sid.filterLow + q * this.sid.filterBand;
+                    let saturatedFeedback = feedback / (1.0 + Math.abs(feedback));
+                    let high = voiceOut - saturatedFeedback;
                     
-                    // Anti-Windup Hard-Clamping
+                    let saturatedHigh = high / (1.0 + Math.abs(high));
+                    this.sid.filterBand += f * saturatedHigh;
+                    
                     if (this.sid.filterBand > 3.0) this.sid.filterBand = 3.0;
                     if (this.sid.filterBand < -3.0) this.sid.filterBand = -3.0;
                     if (this.sid.filterLow > 3.0) this.sid.filterLow = 3.0;
@@ -251,6 +253,13 @@ class SIDProcessor extends AudioWorkletProcessor {
                 }
 
                 view[33] = this.temperature;
+
+                // === KANALLAUTSTÄRKEN (ADSR ENVELOPES) DER 3 SID-VOICES ÜBERTRAGEN ===
+                for (let v = 0; v < 3; v++) {
+                    view[34 + v] = this.sid.voices[v].envelope_counter / 255.0;
+                }
+                view[37] = 0.0; // Unbenutzt für C64
+
                 this.port.postMessage(view);
             }
             this.wasAudible = isAudible;
