@@ -15,7 +15,9 @@ const myModFiles = [
     "turrican_2_title.xm",  // Chris Huelsbeck (5)
     "blood_money_title.mod",
     "moongazr.mod",
-    "immortal.mod"
+    "immortal.mod",
+    "lotus2-title.mod",
+    "DEADLOCK.XM"
 ];
 
 const composerMetadata = {

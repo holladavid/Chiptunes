@@ -695,4 +695,4 @@ class PaulaProcessor extends AudioWorkletProcessor {
     }
 }
 
-registerProcessor('paula-processor', PaulaProcessor);
+registerProcessor('paula-standard-processor', PaulaProcessor);
