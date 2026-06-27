@@ -410,16 +410,19 @@ export function updateChipHUD(stateGetters) {
         
         histIdx = (histIdx + 1) % HIST_LEN;
 
-        let temp = r[29] || 28; 
+        // === HIER IST DIE MATHEMATISCH SYNCHRONISIERTE GRENZFREQUENZ-BERECHNUNG ===
+        let temp = r[29] || 55; // Default auf 55°C
         let fcut = (r[21] & 7) | (r[22] << 3);
+        let norm = fcut / 2047.0;
         
-        let thermalCoefficient = 1.0 - (temp - 40.0) * 0.0035;
-        let fhz = (30 + (fcut * 8)) * thermalCoefficient;
-        if (fhz < 30) fhz = 30;
+        // Identisches physikalisches Modell wie im Audio-Thread (reSID-konforme Kondensator-Untergrenze bei 220Hz!)
+        let baseCutoff = 220.0 + Math.pow(norm, 1.4) * 11500.0;
+        let thermalCoefficient = 1.0 - (temp - 55.0) * 0.0035;
+        let fhz = baseCutoff * thermalCoefficient;
+        if (fhz < 30) fhz = 30; // Hard-Limit Schutz für Extremwerte
 
         document.getElementById('c64-cut-bar').style.width = (fcut / 2047 * 100) + '%';
         document.getElementById('c64-cut-val').innerText = `${Math.round(fhz)} Hz (${temp}°C)`;
-
         let fres = r[23] >> 4;
         document.getElementById('c64-res-bar').style.width = (fres / 15 * 100) + '%';
         document.getElementById('c64-res-val').innerText = fres;

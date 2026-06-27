@@ -1,7 +1,7 @@
 // === js/worklets/c64/sid-worklet.js ===
 // =========================================================
 // MOS TECHNOLOGY SID 6581 AUDIO WORKLET PROCESSOR
-// High-Fidelity Cycle-Exact CPU Lockstep Mischer & Timer Engine (RTI/RTS Stack Fixed)
+// High-Fidelity Cycle-Exact CPU Lockstep Mischer & Bilinear SVF Filter
 // =========================================================
 
 import { CPU6502 } from '../lib/cpu6502.js';
@@ -29,7 +29,10 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.useCiaTimer = false; 
         this.isIrqRoutine = false; 
 
+        // Starttemperatur: Standard-Betriebstemperatur von 55°C (rein nutzergesteuert)
         this.temperature = 55.0;
+
+        // Visualizer Zero-Allocation Buffer (Safe Clone)
         this.visualView = new Float32Array(40);
 
         this.port.onmessage = (e) => {
@@ -44,7 +47,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                 this.cpu.reset(msg.loadAddress, msg.c64Code);
                 this.initAddress = msg.initAddress;
                 this.playAddress = msg.playAddress;
-                this.isIrqRoutine = false; // Zurücksetzen für neuen Track
+                this.isIrqRoutine = false; 
                 
                 let songIndex = (msg.startSong > 0 ? msg.startSong - 1 : 0) & 0xFF;
                 this.cpu.a = songIndex;
@@ -68,8 +71,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                     }
                 }
 
-                // Initial-Reset der Mischer-Verteiler
-                this.temperature = 55.0;
+                // Initial-Reset der Mischer-Verteiler (Temperatur bleibt persistent!)
                 this.cycleAccumulator = 0.0;
                 this.vblankCycles = 19705;
                 this.cpu.isIdle = true;
@@ -97,7 +99,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                 
                 this.cpu.jsr(this.initAddress);
                 
-                this.temperature = 55.0;
                 this.cycleAccumulator = 0.0;
                 this.vblankCycles = 19705;
                 this.cpu.isIdle = true;
@@ -129,22 +130,13 @@ class SIDProcessor extends AudioWorkletProcessor {
                     this.cpu.ciaTimerA -= cyclesToRun;
                     if (this.cpu.ciaTimerA <= 0) {
                         let timerPeriod = (this.cpu.ram[0xDC05] << 8) | this.cpu.ram[0xDC04];
-                        if (timerPeriod === 0) timerPeriod = 19583; // fallback
+                        if (timerPeriod === 0) timerPeriod = 19583; 
                         this.cpu.ciaTimerA += timerPeriod;
                         
-                        // Interrupt nur auslösen, wenn die CPU bereit ist (verhindert Stack-Overflows)
                         if (this.cpu.isIdle) {
                             this.cpu.isIdle = false;
-                            if (this.isIrqRoutine) {
-                                // Für RTI-Interrupts: Push PC-High, PC-Low und STATUS (P)
-                                this.cpu.push(0xFF);
-                                this.cpu.push(0xFE);
-                                this.cpu.push(this.cpu.p); 
-                            } else {
-                                // Für RTS-Routinen: Push PC-High und PC-Low
-                                this.cpu.push(0xFF);
-                                this.cpu.push(0xFE);
-                            }
+                            this.cpu.push(0xFF);
+                            this.cpu.push(0xFE);
                             this.cpu.pc = this.playAddress;
                             this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
                         }
@@ -175,8 +167,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                     if (!this.cpu.isIdle) {
                         let cyclesUsed = this.cpu.step();
                         remainingCycles -= cyclesUsed;
-                        
-                        // RTI (Return from Interrupt) springt auf 0xFFFE zurück, RTS (Return from Subroutine) auf 0xFFFF
                         if (this.cpu.pc === 0xFFFE || this.cpu.pc === 0xFFFF) {
                             this.cpu.isIdle = true; 
                         }
@@ -191,6 +181,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                 let voiceOut = this.sid.synthesizeVoice(v, this.clock, sampleRate, cyclesToRun);
                 
                 if (this.sid.regs[23] & (1 << v)) {
+                    // 1. Nichtlineare Grenzfrequenz (Kondensator-Modell)
                     let cutoffReg = (this.sid.regs[21] & 7) | (this.sid.regs[22] << 3);
                     let norm = cutoffReg / 2047.0;
                     let baseCutoff = 220.0 + Math.pow(norm, 1.4) * 11500.0;
@@ -200,6 +191,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                     if (activeCutoff < 30) activeCutoff = 30;
                     if (activeCutoff > 16000) activeCutoff = 16000;
 
+                    // 2. Trapezoidale Integrationskoeffizienten (Bilinear Transform)
                     let g = Math.tan(Math.PI * activeCutoff / sampleRate);
                     
                     let resReg = this.sid.regs[23] >> 4;
@@ -208,14 +200,18 @@ class SIDProcessor extends AudioWorkletProcessor {
                     let thermalDamp = 1.0 + (this.temperature - 55.0) * 0.0015;
                     q = Math.min(1.0, Math.max(0.04, q * thermalDamp));
 
+                    // 3. ZERO-DELAY BILINEAR TRANSFORM SVF SOLVER
+                    // Berechnet die Integratoren vollständig sauber ohne un-definierte Variablen (f/hp/bp)
                     let h = voiceOut - this.sid.filterLow;
                     let hp = (h - q * this.sid.filterBand) / (1.0 + g * (g + q));
                     let bp = this.sid.filterBand + g * hp;
                     let lp = this.sid.filterLow + g * bp;
                     
+                    // Filter-Zustände aktualisieren (inklusive schnellem algebraischen Sättigungsbegrenzer)
                     this.sid.filterLow = lp;
-                    this.sid.filterBand = bp / (1.0 + Math.abs(bp) * 0.15); 
+                    this.sid.filterBand = bp / (1.0 + Math.abs(bp) * 0.15); // Sanfte analoge Resonanzbegrenzung
                     
+                    // Anti-Windup Hard-Clamping
                     if (this.sid.filterBand > 3.0) this.sid.filterBand = 3.0;
                     if (this.sid.filterBand < -3.0) this.sid.filterBand = -3.0;
                     if (this.sid.filterLow > 3.0) this.sid.filterLow = 3.0;
