@@ -4,7 +4,8 @@
 // =========================================================================
 
 import { trackRegistry } from '../tracks/registry.js';
-import { systemDescriptions, chipCheatSheets } from './content/museum.js'; 
+import { systemDescriptions } from './content/museum.js'; 
+import { chipCheatSheets } from './content/cheatsheets.js'; // --- NEU: Modularer Import ---
 import { workletRegistry } from './worklets/registry.js';
 import { initScroller } from './visuals/scroller.js'; 
 import { initVisuals } from './visuals/visualizer.js'; 
