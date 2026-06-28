@@ -11,11 +11,10 @@ import { DCBlocker } from '../lib/dsp-utils.js';
 class SIDProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        this.clock = 985248; 
+        this.clock = 985248; // PAL C64 Clock
         this.sid = new SIDChip();
         
-        // --- CPU OPTIMIZATION ---
-        // Deaktiviere die teure JFET-Math.tanh-Sättigung in der 1MHz Schleife
+        // Deaktiviere die teure analoge JFET-Sättigung für den Standard-Core
         this.sid.useJfetSaturation = false;
         
         this.cpu = new CPU6502(this.sid);
@@ -91,11 +90,9 @@ class SIDProcessor extends AudioWorkletProcessor {
                 this.isPlaying = false;
             } else if (msg.type === 'RESUME_TRACK') {
                 this.isPlaying = true;
-            } else if (msg.type === 'SEEK_TRACK') {
-                this.currentFrame = msg.frame % this.maxFrames;
             } else if (msg.type === 'CHANGE_SUBSONG') {
                 this.sid = new SIDChip();
-                this.sid.useJfetSaturation = false;
+                this.sid.useJfetSaturation = false; // Sättigung für neuen Subsong deaktiviert halten
                 this.sid.temperature = this.temperature;
                 this.cpu.sid = this.sid;
                 
@@ -134,45 +131,48 @@ class SIDProcessor extends AudioWorkletProcessor {
                 cyclesToRun = Math.floor(this.cycleAccumulator);
                 this.cycleAccumulator -= cyclesToRun;
 
-                if (this.useCiaTimer) {
-                    this.cpu.ciaTimerA -= cyclesToRun;
-                    if (this.cpu.ciaTimerA <= 0) {
-                        let timerPeriod = (this.cpu.ram[0xDC05] << 8) | this.cpu.ram[0xDC04];
-                        if (timerPeriod === 0) timerPeriod = 19583; 
-                        this.cpu.ciaTimerA += timerPeriod;
-                        
-                        if (this.cpu.isIdle) {
-                            this.cpu.isIdle = false;
-                            if (this.isIrqRoutine) {
-                                this.cpu.push(0xFF); this.cpu.push(0xFE); this.cpu.push(this.cpu.p); 
-                            } else {
-                                this.cpu.push(0xFF); this.cpu.push(0xFE);
-                            }
-                            this.cpu.pc = this.playAddress;
-                            this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
-                        }
-                    }
-                } else {
-                    this.vblankCycles -= cyclesToRun;
-                    if (this.vblankCycles <= 0) {
-                        this.vblankCycles += 19705; 
-                        
-                        if (this.cpu.isIdle) {
-                            this.cpu.isIdle = false;
-                            if (this.isIrqRoutine) {
-                                this.cpu.push(0xFF); this.cpu.push(0xFE); this.cpu.push(this.cpu.p); 
-                            } else {
-                                this.cpu.push(0xFF); this.cpu.push(0xFE);
-                            }
-                            this.cpu.pc = this.playAddress;
-                            this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
-                        }
-                    }
-                }
-
-                // --- CPU OPTIMIZATION: Boxcar Decimation ---
+                // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP ---
                 let sampleSum = 0;
                 for (let c = 0; c < cyclesToRun; c++) {
+                    
+                    // 1. Taktgenaue Timer & Interrupt Überwachung
+                    if (this.useCiaTimer) {
+                        this.cpu.ciaTimerA--;
+                        if (this.cpu.ciaTimerA <= 0) {
+                            let timerPeriod = (this.cpu.ram[0xDC05] << 8) | this.cpu.ram[0xDC04];
+                            if (timerPeriod === 0) timerPeriod = 19583; 
+                            this.cpu.ciaTimerA += timerPeriod;
+                            
+                            if (this.cpu.isIdle) {
+                                this.cpu.isIdle = false;
+                                if (this.isIrqRoutine) {
+                                    this.cpu.push(0xFF); this.cpu.push(0xFE); this.cpu.push(this.cpu.p); 
+                                } else {
+                                    this.cpu.push(0xFF); this.cpu.push(0xFE);
+                                }
+                                this.cpu.pc = this.playAddress;
+                                this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
+                            }
+                        }
+                    } else {
+                        this.vblankCycles--;
+                        if (this.vblankCycles <= 0) {
+                            this.vblankCycles += 19705; 
+                            
+                            if (this.cpu.isIdle) {
+                                this.cpu.isIdle = false;
+                                if (this.isIrqRoutine) {
+                                    this.cpu.push(0xFF); this.cpu.push(0xFE); this.cpu.push(this.cpu.p); 
+                                } else {
+                                    this.cpu.push(0xFF); this.cpu.push(0xFE);
+                                }
+                                this.cpu.pc = this.playAddress;
+                                this.currentFrame = (this.currentFrame + 1) % this.maxFrames;
+                            }
+                        }
+                    }
+
+                    // 2. CPU-Befehle ausführen
                     if (this.cpuCyclesRemaining <= 0) {
                         if (!this.cpu.isIdle) {
                             let cyclesUsed = this.cpu.step();
@@ -186,10 +186,14 @@ class SIDProcessor extends AudioWorkletProcessor {
                         this.cpuCyclesRemaining--;
                     }
                     
+                    // 3. Taktgenaue Soundchip-Aktualisierung (bei 985.248 Hz)
                     this.sid.clock();
+                    
+                    // Boxcar Akkumulation (Keine Filter-Gleichungen!)
                     sampleSum += this.sid.outputSample;
                 }
                 
+                // Boxcar-Mittelwertbildung für die Web-Audio-Rate
                 let finalSample = cyclesToRun > 0 ? sampleSum / cyclesToRun : this.lastSampleValue;
                 this.lastSampleValue = finalSample;
                 
