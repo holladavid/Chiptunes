@@ -238,4 +238,4 @@ class SIDProcessor extends AudioWorkletProcessor {
     }
 }
 
-registerProcessor('sid-processor', SIDProcessor);
+registerProcessor('sid-exact-processor', SIDProcessor);

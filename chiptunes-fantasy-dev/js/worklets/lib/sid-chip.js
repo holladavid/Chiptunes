@@ -1,7 +1,7 @@
 // === js/worklets/lib/sid-chip.js ===
 // ==========================================
 // MOS Technology SID 6581 Sound Chip Emulation
-// Pure Cycle-Exact 985.248 Hz Native Clock Synthesis & JFET Modeling
+// Pure Cycle-Exact 985.248 Hz Native Clock Synthesis
 // ==========================================
 
 const ENV_ATTACK = 0, ENV_DECAY = 1, ENV_SUSTAIN = 2, ENV_RELEASE = 3;
@@ -26,6 +26,9 @@ export class SIDChip {
         this.filterLow = 0; this.filterBand = 0;
         this.temperature = 55.0;
         this.outputSample = 0;
+        
+        // --- NEU: Schalter für die rechenintensive JFET-Sättigung ---
+        this.useJfetSaturation = true; 
     }
 
     writeReg(reg, val) {
@@ -124,7 +127,6 @@ export class SIDChip {
                 }
             }
         }
-        
         ch.rate_counter--;
     }
 
@@ -133,7 +135,6 @@ export class SIDChip {
 
         if ((ch.ctrl & 8) === 0) {
             let oldAcc = ch.phase;
-            
             ch.phase = (ch.phase + ch.freq) & 0xFFFFFF;
             let newAcc = ch.phase;
 
@@ -243,10 +244,12 @@ export class SIDChip {
                 
                 this.filterLow = lp;
                 
-                // --- NEU: AUTHENTISCHE MOS 6581 JFET SÄTTIGUNG ---
-                // Die tanh() Funktion bildet die nichtlineare Röhren-artige Sättigung
-                // der originalen Transistoren im C64 SVF-Filter bei hohen Resonanzpegeln ab.
-                this.filterBand = Math.tanh(bp * 1.2) / 1.2;
+                // --- NEU: Wählbare Sättigungs-Modelle ---
+                if (this.useJfetSaturation) {
+                    this.filterBand = Math.tanh(bp * 1.2) / 1.2; // Rechenintensive JFET-Röhre
+                } else {
+                    this.filterBand = bp / (1.0 + Math.abs(bp) * 0.15); // Schnelle algebraische Soft-Sättigung
+                }
                 
                 if (this.filterBand > 3.0) this.filterBand = 3.0;
                 if (this.filterBand < -3.0) this.filterBand = -3.0;
