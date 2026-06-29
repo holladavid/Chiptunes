@@ -1,15 +1,15 @@
 // === js/worklets/lib/sid-chip.js ===
-// ==========================================
+// =========================================================
 // MOS Technology SID 6581 Sound Chip Emulation
-// Phase 4: Non-linear DAC Crunch, Asymmetric JFETs & FET-LUT Polynomial
-// ==========================================
+// Phase 6: ADSR Pipeline Delay & True Sustain-Drop Hardware Bug
+// =========================================================
 
 import { calculateWaveform8Bit } from './sid-waveforms.js';
 import { DAC_LUT, CUTOFF_LUT } from './sid-luts.js';
 
-const ENV_ATTACK = 0, ENV_DECAY = 1, ENV_SUSTAIN = 2, ENV_RELEASE = 3;
+// DSP UPGRADE: Es gibt keinen Sustain-State in Hardware!
+const ENV_ATTACK = 0, ENV_DECAY = 1, ENV_RELEASE = 2; 
 const RATE_COUNTER_PERIOD = [9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19530, 31256];
-const PHASE_SCALE = 1.0 / 16777216.0;
 
 export class SIDChip {
     constructor() {
@@ -53,7 +53,6 @@ export class SIDChip {
         let norm = cutoffReg / 2047.0;
         let thermalCoefficient = 1.0 - (this._temperature - 55.0) * 0.0035;
 
-        // --- PHASE 4: Nichtlineares FET-Polynom (Gemessene Cutoff-Kurve) ---
         let fetCurve = 30.0 + 250.0 * norm + 8000.0 * (norm * norm) + 8000.0 * (norm * norm * norm);
         
         this.activeCutoff = fetCurve * thermalCoefficient;
@@ -86,9 +85,21 @@ export class SIDChip {
             let gate = (ch.ctrl & 1) !== 0;
             let prevGate = (prevCtrl & 1) !== 0;
             
+            // =========================================================
+            // DSP UPGRADE: ADSR PIPELINE DELAY & COUNTER RESET
+            // =========================================================
             if (gate !== prevGate) {
+                // Pipeline Delay für exakt 1 Cycle
                 ch.envDelay = 1;
                 ch.state = gate ? ENV_ATTACK : ENV_RELEASE;
+                
+                // Hardware-Bug: Gate-On friert nicht nur ein, es resettet 
+                // den Rate-Counter! Dadurch schlägt jeder Kickdrum-Attack
+                // phasenstarr und knackig ein, ohne auf Reste zu warten.
+                if (gate) {
+                    ch.rate_counter = ch.attack_period;
+                    ch.exponential_counter = 0;
+                }
             }
             ch.prevGate = gate;
 
@@ -123,21 +134,15 @@ export class SIDChip {
             return;
         }
 
-        if (ch.state === ENV_SUSTAIN) {
-            ch.envelope_counter = ch.sustain_level;
-            return;
-        }
+        let ratePeriod = ch.release_period;
+        if (ch.state === ENV_ATTACK) ratePeriod = ch.attack_period;
+        else if (ch.state === ENV_DECAY) ratePeriod = ch.decay_period;
 
-        let ratePeriod = 9;
-        switch (ch.state) {
-            case ENV_ATTACK:  ratePeriod = ch.attack_period; break;
-            case ENV_DECAY:   ratePeriod = ch.decay_period; break;
-            case ENV_RELEASE: ratePeriod = ch.release_period; break;
-        }
-
+        ch.rate_counter--;
         if (ch.rate_counter <= 0) {
-            ch.rate_counter += ratePeriod; 
+            ch.rate_counter = ratePeriod; // Wrap-around des 15-Bit Counters
 
+            // Der pseudo-exponentielle Divider des SID
             let expPeriod = 1;
             if (ch.state !== ENV_ATTACK) {
                 let envVal = ch.envelope_counter;
@@ -160,11 +165,15 @@ export class SIDChip {
                         ch.state = ENV_DECAY;
                     }
                 } else if (ch.state === ENV_DECAY) {
-                    let sustainVal = ch.sustain_level;
-                    if (ch.envelope_counter > sustainVal) {
-                        ch.envelope_counter--;
-                    } else {
-                        ch.state = ENV_SUSTAIN;
+                    // =========================================================
+                    // DSP UPGRADE: SUSTAIN DROP BUG (NO SUSTAIN STATE)
+                    // =========================================================
+                    // Der SID stoppt das Decay lediglich, wenn envelope == sustain_level.
+                    // Wenn der Coder das Sustain-Level nachträglich ändert und
+                    // die Hüllkurve die Gleichheit verfehlt, bricht der Wert
+                    // gnadenlos bis auf 0 ein (Sustain Drop Bug).
+                    if (ch.envelope_counter !== ch.sustain_level) {
+                        if (ch.envelope_counter > 0) ch.envelope_counter--;
                     }
                 } else if (ch.state === ENV_RELEASE) {
                     if (ch.envelope_counter > 0) {
@@ -173,7 +182,6 @@ export class SIDChip {
                 }
             }
         }
-        ch.rate_counter--;
     }
 
     synthesizeVoiceOneCycle(v) {
@@ -207,7 +215,6 @@ export class SIDChip {
             ringMSB ^= (prevCh.phase >> 23) & 1;
         }
 
-        // KORREKTUR: Signatur-Mismatch behoben! Wir rufen wieder mit exakt 5 Parametern auf.
         ch.waveOut8Bit = calculateWaveform8Bit(ch.ctrl, ch.phase, ch.pw, ch.lfsr, ringMSB);
         ch.env8Bit = ch.envelope_counter;
 
@@ -247,19 +254,15 @@ export class SIDChip {
             q += damp * 0.55; 
         }
 
-let h = filteredSum - this.filterLow;
+        let h = filteredSum - this.filterLow;
         let hp = (h - q * this.filterBand) / (1.0 + g * (g + q));
         let bp = this.filterBand + g * hp;
         let lp = this.filterLow + g * bp;
         
         this.filterLow = lp;
         
-        // =========================================================
-        // DSP UPGRADE (FIXED): STABILE ASYMMETRISCHE SVF-SÄTTIGUNG
-        // =========================================================
         if (this.useJfetSaturation) {
-            // Asymmetrisches Clipping OHNE quadratischen DC-Shift im Integrator!
-            // Wir clippen die negative Halbwelle härter, belassen aber f(0) = 0.
+            // Stabiles asymmetrisches Clipping ohne Latch-Up
             if (bp > 0) {
                 this.filterBand = Math.tanh(bp * 0.8) / 0.8;
             } else {
@@ -282,12 +285,10 @@ let h = filteredSum - this.filterLow;
         let leakage = filteredSum * 0.11;
         let filteredMix = filterOut + leakage;
 
-        // --- VCA WARMTH (ANALOG GLUE & 2ND HARMONICS) ---
         let rawSum = unfilteredSum + filteredMix;
         let vcaIn = rawSum * 0.42; 
         
-        // HIER bringen wir den "Growl" sicher unter, da der VCA nicht rückkoppelt!
-        // Leichte quadratische Verzerrung simuliert den Single-Ended Verstärker
+        // VCA Warmth mit 2nd Harmonics Growl
         let vcaQuad = this.useJfetSaturation ? (0.05 * Math.pow(vcaIn, 2)) : 0;
         
         let finalMix = vcaIn > 0 
