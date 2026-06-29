@@ -19,6 +19,7 @@ class SIDProcessor extends AudioWorkletProcessor {
         
         this.cpu = new CPU6502(this.sid);
         this.dcBlock = new DCBlocker();
+        this.outLp = 0; // Filter-State für Motherboard RC-Simulation
 
         this.trackData = null;
         this.isPlaying = false;
@@ -48,8 +49,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             }
 
             if (msg.isSidFile) {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.lastSampleValue = 0;
+                this.outLp = 0;
                 this.dcBlock = new DCBlocker();
 
                 this.sid = new SIDChip();
@@ -99,8 +100,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             } else if (msg.type === 'RESUME_TRACK') {
                 this.isPlaying = true;
             } else if (msg.type === 'CHANGE_SUBSONG') {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.lastSampleValue = 0;
+                this.outLp = 0;
                 this.dcBlock = new DCBlocker();
 
                 this.sid = new SIDChip();
@@ -143,11 +144,9 @@ class SIDProcessor extends AudioWorkletProcessor {
                 cyclesToRun = Math.floor(this.cycleAccumulator);
                 this.cycleAccumulator -= cyclesToRun;
 
-                // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP ---
                 let sampleSum = 0;
                 for (let c = 0; c < cyclesToRun; c++) {
                     
-                    // 1. Taktgenaue Timer & Interrupt Überwachung
                     if (this.useCiaTimer) {
                         this.cpu.ciaTimerA--;
                         if (this.cpu.ciaTimerA <= 0) {
@@ -184,7 +183,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                         }
                     }
 
-                    // 2. CPU-Befehle ausführen
                     if (this.cpuCyclesRemaining <= 0) {
                         if (!this.cpu.isIdle) {
                             let cyclesUsed = this.cpu.step();
@@ -198,18 +196,18 @@ class SIDProcessor extends AudioWorkletProcessor {
                         this.cpuCyclesRemaining--;
                     }
                     
-                    // 3. Taktgenaue Soundchip-Aktualisierung (bei 985.248 Hz)
                     this.sid.clock();
-                    
-                    // Boxcar-Akkumulation
                     sampleSum += this.sid.outputSample;
                 }
                 
-                // Boxcar-Mittelwertbildung für die Web-Audio-Rate
                 let finalSample = cyclesToRun > 0 ? sampleSum / cyclesToRun : this.lastSampleValue;
                 this.lastSampleValue = finalSample;
                 
                 finalSample = this.dcBlock.process(finalSample);
+
+                // --- C64 Motherboard Audio Filter (1-Pole RC, ca. 12.5 kHz) ---
+                this.outLp += 0.65 * (finalSample - this.outLp);
+                finalSample = this.outLp;
 
                 outL[i] = finalSample;
                 if (outR) outR[i] = finalSample;
@@ -246,5 +244,4 @@ class SIDProcessor extends AudioWorkletProcessor {
     }
 }
 
-// --- HIER IST DIE REGISTRIERUNG ---
 registerProcessor('sid-standard-processor', SIDProcessor);

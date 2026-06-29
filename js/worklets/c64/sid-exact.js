@@ -37,7 +37,9 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.cpuCyclesRemaining = 0;
         
         // --- OPTIMIERUNG: Vorberechnete Butterworth-Dämpfungen & Teiler ---
-        const fc = 18000.0; 
+        // C64 Motherboard Audio-Kondensator Simulation
+        // Cutoff bei 12.5 kHz dämpft die harschen Höhen und sorgt für die echte analoge Wärme!
+        const fc = 12500.0; 
         this.aaf_g = Math.tan(Math.PI * fc / this.clock);
         const r1 = 1.847759; // Damping (1/Q1) für Stage 1
         const r2 = 0.765366; // Damping (1/Q2) für Stage 2
@@ -64,7 +66,6 @@ class SIDProcessor extends AudioWorkletProcessor {
             }
 
             if (msg.isSidFile) {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.aaf1_l = 0; this.aaf1_b = 0;
                 this.aaf2_l = 0; this.aaf2_b = 0;
                 this.dcBlock = new DCBlocker();
@@ -111,7 +112,6 @@ class SIDProcessor extends AudioWorkletProcessor {
             } else if (msg.type === 'RESUME_TRACK') {
                 this.isPlaying = true;
             } else if (msg.type === 'CHANGE_SUBSONG') {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.aaf1_l = 0; this.aaf1_b = 0;
                 this.aaf2_l = 0; this.aaf2_b = 0;
                 this.dcBlock = new DCBlocker();
@@ -159,7 +159,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                 // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP ---
                 for (let c = 0; c < cyclesToRun; c++) {
                     
-                    // 1. Taktgenaue Timer & Interrupt Überwachung
                     if (this.useCiaTimer) {
                         this.cpu.ciaTimerA--;
                         if (this.cpu.ciaTimerA <= 0) {
@@ -196,7 +195,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                         }
                     }
 
-                    // 2. CPU-Befehle ausführen
                     if (this.cpuCyclesRemaining <= 0) {
                         if (!this.cpu.isIdle) {
                             let cyclesUsed = this.cpu.step();
@@ -210,11 +208,9 @@ class SIDProcessor extends AudioWorkletProcessor {
                         this.cpuCyclesRemaining--;
                     }
                     
-                    // 3. Taktgenaue Soundchip-Aktualisierung (bei 985.248 Hz)
                     this.sid.clock();
                     let out = this.sid.outputSample;
                     
-                    // 4. Butterworth Decimation mit vorbereiteter ZDF-Multiplikation (Keine Divisionen!)
                     let hp1 = (out - this.aaf1_l - this.aaf_r1 * this.aaf1_b) * this.aaf_scale1;
                     let bp1 = this.aaf1_b + this.aaf_g * hp1;
                     this.aaf1_l = this.aaf1_l + this.aaf_g * bp1;
