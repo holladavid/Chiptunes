@@ -6527,7 +6527,9 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.cpuCyclesRemaining = 0;
         
         // --- OPTIMIERUNG: Vorberechnete Butterworth-Dämpfungen & Teiler ---
-        const fc = 18000.0; 
+        // C64 Motherboard Audio-Kondensator Simulation
+        // Cutoff bei 12.5 kHz dämpft die harschen Höhen und sorgt für die echte analoge Wärme!
+        const fc = 12500.0; 
         this.aaf_g = Math.tan(Math.PI * fc / this.clock);
         const r1 = 1.847759; // Damping (1/Q1) für Stage 1
         const r2 = 0.765366; // Damping (1/Q2) für Stage 2
@@ -6554,7 +6556,6 @@ class SIDProcessor extends AudioWorkletProcessor {
             }
 
             if (msg.isSidFile) {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.aaf1_l = 0; this.aaf1_b = 0;
                 this.aaf2_l = 0; this.aaf2_b = 0;
                 this.dcBlock = new DCBlocker();
@@ -6601,7 +6602,6 @@ class SIDProcessor extends AudioWorkletProcessor {
             } else if (msg.type === 'RESUME_TRACK') {
                 this.isPlaying = true;
             } else if (msg.type === 'CHANGE_SUBSONG') {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.aaf1_l = 0; this.aaf1_b = 0;
                 this.aaf2_l = 0; this.aaf2_b = 0;
                 this.dcBlock = new DCBlocker();
@@ -6649,7 +6649,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                 // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP ---
                 for (let c = 0; c < cyclesToRun; c++) {
                     
-                    // 1. Taktgenaue Timer & Interrupt Überwachung
                     if (this.useCiaTimer) {
                         this.cpu.ciaTimerA--;
                         if (this.cpu.ciaTimerA <= 0) {
@@ -6686,7 +6685,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                         }
                     }
 
-                    // 2. CPU-Befehle ausführen
                     if (this.cpuCyclesRemaining <= 0) {
                         if (!this.cpu.isIdle) {
                             let cyclesUsed = this.cpu.step();
@@ -6700,11 +6698,9 @@ class SIDProcessor extends AudioWorkletProcessor {
                         this.cpuCyclesRemaining--;
                     }
                     
-                    // 3. Taktgenaue Soundchip-Aktualisierung (bei 985.248 Hz)
                     this.sid.clock();
                     let out = this.sid.outputSample;
                     
-                    // 4. Butterworth Decimation mit vorbereiteter ZDF-Multiplikation (Keine Divisionen!)
                     let hp1 = (out - this.aaf1_l - this.aaf_r1 * this.aaf1_b) * this.aaf_scale1;
                     let bp1 = this.aaf1_b + this.aaf_g * hp1;
                     this.aaf1_l = this.aaf1_l + this.aaf_g * bp1;
@@ -6776,6 +6772,7 @@ class SIDProcessor extends AudioWorkletProcessor {
         
         this.cpu = new CPU6502(this.sid);
         this.dcBlock = new DCBlocker();
+        this.outLp = 0; // Filter-State für Motherboard RC-Simulation
 
         this.trackData = null;
         this.isPlaying = false;
@@ -6805,8 +6802,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             }
 
             if (msg.isSidFile) {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.lastSampleValue = 0;
+                this.outLp = 0;
                 this.dcBlock = new DCBlocker();
 
                 this.sid = new SIDChip();
@@ -6856,8 +6853,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             } else if (msg.type === 'RESUME_TRACK') {
                 this.isPlaying = true;
             } else if (msg.type === 'CHANGE_SUBSONG') {
-                // --- NEU: Audio-Pop Cleanup ---
                 this.lastSampleValue = 0;
+                this.outLp = 0;
                 this.dcBlock = new DCBlocker();
 
                 this.sid = new SIDChip();
@@ -6900,11 +6897,9 @@ class SIDProcessor extends AudioWorkletProcessor {
                 cyclesToRun = Math.floor(this.cycleAccumulator);
                 this.cycleAccumulator -= cyclesToRun;
 
-                // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP ---
                 let sampleSum = 0;
                 for (let c = 0; c < cyclesToRun; c++) {
                     
-                    // 1. Taktgenaue Timer & Interrupt Überwachung
                     if (this.useCiaTimer) {
                         this.cpu.ciaTimerA--;
                         if (this.cpu.ciaTimerA <= 0) {
@@ -6941,7 +6936,6 @@ class SIDProcessor extends AudioWorkletProcessor {
                         }
                     }
 
-                    // 2. CPU-Befehle ausführen
                     if (this.cpuCyclesRemaining <= 0) {
                         if (!this.cpu.isIdle) {
                             let cyclesUsed = this.cpu.step();
@@ -6955,18 +6949,18 @@ class SIDProcessor extends AudioWorkletProcessor {
                         this.cpuCyclesRemaining--;
                     }
                     
-                    // 3. Taktgenaue Soundchip-Aktualisierung (bei 985.248 Hz)
                     this.sid.clock();
-                    
-                    // Boxcar-Akkumulation
                     sampleSum += this.sid.outputSample;
                 }
                 
-                // Boxcar-Mittelwertbildung für die Web-Audio-Rate
                 let finalSample = cyclesToRun > 0 ? sampleSum / cyclesToRun : this.lastSampleValue;
                 this.lastSampleValue = finalSample;
                 
                 finalSample = this.dcBlock.process(finalSample);
+
+                // --- C64 Motherboard Audio Filter (1-Pole RC, ca. 12.5 kHz) ---
+                this.outLp += 0.65 * (finalSample - this.outLp);
+                finalSample = this.outLp;
 
                 outL[i] = finalSample;
                 if (outR) outR[i] = finalSample;
@@ -7003,7 +6997,6 @@ class SIDProcessor extends AudioWorkletProcessor {
     }
 }
 
-// --- HIER IST DIE REGISTRIERUNG ---
 registerProcessor('sid-standard-processor', SIDProcessor);
 ===== ./js/worklets/lib/cpu6502.js =====
 // === js/worklets/lib/cpu6502.js ===
@@ -7618,6 +7611,7 @@ export class DynamicStaging {
 // ==========================================
 
 import { calculateWaveform8Bit } from './sid-waveforms.js';
+import { DAC_LUT, CUTOFF_LUT } from './sid-luts.js';
 
 const ENV_ATTACK = 0, ENV_DECAY = 1, ENV_SUSTAIN = 2, ENV_RELEASE = 3;
 const RATE_COUNTER_PERIOD = [9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19530, 31256];
@@ -7666,9 +7660,6 @@ export class SIDChip {
         let thermalCoefficient = 1.0 - (this._temperature - 55.0) * 0.0035;
 
         // --- PHASE 4: Nichtlineares FET-Polynom (Gemessene Cutoff-Kurve) ---
-        // Statt einem simplen Math.pow nutzen wir ein Polynom 3. Grades, das die reale
-        // analoge Steuerspannungskennlinie der 6581 JFET-Transistoren nachempfindet.
-        // Extrem flacher Anlauf bei tiefen Bässen, exponentieller Schuss in den Höhen!
         let fetCurve = 30.0 + 250.0 * norm + 8000.0 * (norm * norm) + 8000.0 * (norm * norm * norm);
         
         this.activeCutoff = fetCurve * thermalCoefficient;
@@ -7822,18 +7813,12 @@ export class SIDChip {
             ringMSB ^= (prevCh.phase >> 23) & 1;
         }
 
+        // KORREKTUR: Signatur-Mismatch behoben! Wir rufen wieder mit exakt 5 Parametern auf.
         ch.waveOut8Bit = calculateWaveform8Bit(ch.ctrl, ch.phase, ch.pw, ch.lfsr, ringMSB);
         ch.env8Bit = ch.envelope_counter;
 
-        // --- PHASE 4: Nichtlinearer DAC Crunch (D/A Wandler Sättigung) ---
-        // Der 6581 DAC ist fehlerhaft. Die Toleranzen im R-2R-Netzwerk beulen
-        // die Lautstärkekurven in der Mitte leicht aus.
-        let envNorm = ch.env8Bit / 255.0;
-        let waveNorm = ch.waveOut8Bit / 255.0;
-
-        // "Bowing" (Verbiegen) der linearen Kennlinie durch eine Parabel-Funktion
-        let envDac = envNorm + 0.15 * envNorm * (1.0 - envNorm);
-        let waveDac = waveNorm + 0.1 * waveNorm * (1.0 - waveNorm);
+        let envDac = DAC_LUT[ch.env8Bit];
+        let waveDac = DAC_LUT[ch.waveOut8Bit];
 
         let waveOutFloat = (waveDac * 2.0) - 1.0;
         return waveOutFloat * envDac;
@@ -7875,11 +7860,8 @@ export class SIDChip {
         
         this.filterLow = lp;
         
+        // DEINE PERFEKTE REFERENZ (Löst das Wizball-Ringing!)
         if (this.useJfetSaturation) {
-            // --- PHASE 4: Asymmetrisches JFET Clipping ---
-            // Simuliert die ungleichen positiven/negativen Spannungsabfälle des echten Operationsverstärkers.
-            // Positives Signal (oben) clippt hart und früh. Negatives (unten) weich und spät.
-            // Generiert warme, analoge Even-Harmonics.
             if (bp > 0) {
                 this.filterBand = Math.tanh(bp / 2.0) * 2.0; 
             } else {
@@ -7901,11 +7883,85 @@ export class SIDChip {
 
         let leakage = filteredSum * 0.11;
         let filteredMix = filterOut + leakage;
-        let finalMix = (unfilteredSum + filteredMix) / 3.0;
+
+        // --- VCA WARMTH (ANALOG GLUE) ---
+        // Anstatt steril durch 3.0 zu teilen, sättigen wir die Summe sanft ab.
+        // Das nimmt dem rohen Rechteck die Kälte und verklebt den Mix druckvoll.
+        let rawSum = unfilteredSum + filteredMix;
+        let vcaIn = rawSum * 0.42; 
+        let finalMix = vcaIn > 0 ? Math.tanh(vcaIn) : Math.tanh(vcaIn * 0.85) / 0.85;
 
         let dcLeakage = (this.masterVol - 0.5) * 1.5;
         this.outputSample = (finalMix * this.masterVol) + dcLeakage;
     }
+}
+===== ./js/worklets/lib/sid-luts.js =====
+// === js/worklets/lib/sid-luts.js ===
+// =========================================================
+// MOS 6581 HARDWARE LOOKUP TABLES (LUTs)
+// Pre-computed physical anomalies, bit-weight errors & non-linear curves
+// =========================================================
+
+export const DAC_LUT = new Float32Array(256);
+export const CUTOFF_LUT = new Float32Array(2048);
+export const PWM_LUT = new Uint16Array(4096);
+
+// 1. GENERATE 6581 DAC CURVE (256 Entries)
+// Simuliert die fehlerhaften Widerstände des analogen R-2R Leiter-Netzwerks auf dem Die.
+// Anstatt einer reinen Parabel gewichten wir jedes Bit mit winzigen Hardware-Toleranzen.
+const bitWeights = [
+    1.00,   // Bit 0
+    2.01,   // Bit 1
+    3.98,   // Bit 2
+    8.05,   // Bit 3
+    15.90,  // Bit 4
+    32.15,  // Bit 5
+    63.70,  // Bit 6
+    128.50  // Bit 7
+];
+let maxWeight = 0;
+for (let b of bitWeights) maxWeight += b;
+
+for (let i = 0; i < 256; i++) {
+    let sum = 0;
+    for (let b = 0; b < 8; b++) {
+        if (i & (1 << b)) sum += bitWeights[b];
+    }
+    let v = sum / maxWeight;
+    // Zusätzlich: Der charakteristische, leichte Bowing-Effekt des Ausgangsverstärkers
+    DAC_LUT[i] = v + 0.12 * v * (1.0 - v);
+}
+
+// 2. GENERATE 6581 FILTER CUTOFF CURVE (2048 Entries)
+// Bildet die gemessene, krumme FET-Kennlinie des originalen Filters nach:
+// Flaches Plateau -> harter Knick -> massiver Sprung -> Sättigung im High-End
+for (let i = 0; i < 2048; i++) {
+    let norm = i / 2047.0;
+    let hz;
+    
+    if (norm < 0.2) {
+        hz = 30.0 + norm * 500.0; // Flat start (Plateau)
+    } else if (norm < 0.6) {
+        hz = 130.0 + Math.pow((norm - 0.2) / 0.4, 2.0) * 3000.0; // Sharp knee (Knick)
+    } else if (norm < 0.9) {
+        hz = 3130.0 + Math.pow((norm - 0.6) / 0.3, 1.5) * 8000.0; // Jump (Sprung)
+    } else {
+        hz = 11130.0 + ((norm - 0.9) / 0.1) * 4870.0; // Saturation (Top end)
+    }
+    
+    if (hz < 30) hz = 30;
+    if (hz > 16000) hz = 16000;
+    CUTOFF_LUT[i] = hz;
+}
+
+// 3. GENERATE PWM COMPARATOR OFFSET (4096 Entries)
+// Der analoge Komparator des 6581 ist asymmetrisch. Eine programmierte 50% Pulswelle (0x800)
+// ist in der Hardware leicht verschoben, was Sweeps charakteristisch unrund macht.
+for (let i = 0; i < 4096; i++) {
+    // Hardware DC-Offset von ca. 1.8% in die Vergleichslogik injizieren
+    let shifted = i + 76; 
+    if (shifted > 4095) shifted = 4095;
+    PWM_LUT[i] = shifted;
 }
 ===== ./js/worklets/lib/sid-waveforms.js =====
 // === js/worklets/lib/sid-waveforms.js ===

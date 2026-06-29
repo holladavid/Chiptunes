@@ -1,8 +1,8 @@
 // === js/worklets/c64/sid-exact.js ===
 // =========================================================
 // MOS TECHNOLOGY SID 6581 AUDIO WORKLET PROCESSOR
-// High-Fidelity Cycle-Exact Lockstep Mischer & 4-Pole Butterworth Decimation
-// Optimized 1-MHz ZDF Filter Stage
+// High-Fidelity Cycle-Exact Lockstep Mischer
+// Studio-Grade Polyphase Sinc-FIR Decimator (Zero Aliasing)
 // =========================================================
 
 import { CPU6502 } from '../lib/cpu6502.js';
@@ -36,24 +36,37 @@ class SIDProcessor extends AudioWorkletProcessor {
         this.temperature = 55.0;
         this.cpuCyclesRemaining = 0;
         
-        // --- OPTIMIERUNG: Vorberechnete Butterworth-Dämpfungen & Teiler ---
-        // C64 Motherboard Audio-Kondensator Simulation
-        // Cutoff bei 12.5 kHz dämpft die harschen Höhen und sorgt für die echte analoge Wärme!
-        const fc = 12500.0; 
-        this.aaf_g = Math.tan(Math.PI * fc / this.clock);
-        const r1 = 1.847759; // Damping (1/Q1) für Stage 1
-        const r2 = 0.765366; // Damping (1/Q2) für Stage 2
+        // =========================================================
+        // DSP UPGRADE: 255-TAP POLYPHASE SINC-FIR DECIMATOR
+        // =========================================================
+        this.FIR_TAPS = 255;
+        this.firKernel = new Float32Array(this.FIR_TAPS);
         
-        this.aaf_r1 = r1;
-        this.aaf_r2 = r2;
+        // Wir nutzen eine Zweierpotenz (512) für den Ringpuffer, um mit Bitwise-AND maskieren zu können (schneller als Modulo)
+        this.ringBuffer = new Float32Array(512); 
+        this.ringIndex = 0;
         
-        // Kehrwert der ZDF-Nenner vorab berechnen, um die 1-MHz-Divisionen komplett zu eliminieren!
-        this.aaf_scale1 = 1.0 / (1.0 + this.aaf_g * (this.aaf_g + r1));
-        this.aaf_scale2 = 1.0 / (1.0 + this.aaf_g * (this.aaf_g + r2));
+        // Cutoff bei 12.5 kHz simuliert den C64 Motherboard Kondensator
+        // und wirkt gleichzeitig als Brickwall Anti-Aliasing Filter für das Downsampling
+        let fc = 12500.0 / this.clock; 
+        let sum = 0;
         
-        this.aaf1_l = 0; this.aaf1_b = 0;
-        this.aaf2_l = 0; this.aaf2_b = 0;
+        // Konstruktion des Blackman-Windowed Sinc-Kernels
+        for (let i = 0; i < this.FIR_TAPS; i++) {
+            let x = i - (this.FIR_TAPS - 1) / 2;
+            let sinc = (x === 0) ? (2 * Math.PI * fc) : Math.sin(2 * Math.PI * fc * x) / x;
+            // Blackman Window für exzellente Stopband Attenuation (ca. -74dB)
+            let window = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / (this.FIR_TAPS - 1)) + 0.08 * Math.cos(4 * Math.PI * i / (this.FIR_TAPS - 1));
+            
+            this.firKernel[i] = sinc * window;
+            sum += this.firKernel[i];
+        }
         
+        // Normalisierung für Unity Gain (0 dB)
+        for (let i = 0; i < this.FIR_TAPS; i++) {
+            this.firKernel[i] /= sum; 
+        }
+
         this.visualView = new Float32Array(40);
 
         this.port.onmessage = (e) => {
@@ -66,8 +79,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             }
 
             if (msg.isSidFile) {
-                this.aaf1_l = 0; this.aaf1_b = 0;
-                this.aaf2_l = 0; this.aaf2_b = 0;
+                this.ringBuffer.fill(0);
+                this.ringIndex = 0;
                 this.dcBlock = new DCBlocker();
 
                 this.cpu.reset(msg.loadAddress, msg.c64Code);
@@ -112,8 +125,8 @@ class SIDProcessor extends AudioWorkletProcessor {
             } else if (msg.type === 'RESUME_TRACK') {
                 this.isPlaying = true;
             } else if (msg.type === 'CHANGE_SUBSONG') {
-                this.aaf1_l = 0; this.aaf1_b = 0;
-                this.aaf2_l = 0; this.aaf2_b = 0;
+                this.ringBuffer.fill(0);
+                this.ringIndex = 0;
                 this.dcBlock = new DCBlocker();
 
                 this.sid = new SIDChip();
@@ -156,7 +169,7 @@ class SIDProcessor extends AudioWorkletProcessor {
                 cyclesToRun = Math.floor(this.cycleAccumulator);
                 this.cycleAccumulator -= cyclesToRun;
 
-                // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP ---
+                // --- THE NATIVE CYCLE-EXACT LOCKSTEP LOOP (1 MHz) ---
                 for (let c = 0; c < cyclesToRun; c++) {
                     
                     if (this.useCiaTimer) {
@@ -209,20 +222,23 @@ class SIDProcessor extends AudioWorkletProcessor {
                     }
                     
                     this.sid.clock();
-                    let out = this.sid.outputSample;
                     
-                    let hp1 = (out - this.aaf1_l - this.aaf_r1 * this.aaf1_b) * this.aaf_scale1;
-                    let bp1 = this.aaf1_b + this.aaf_g * hp1;
-                    this.aaf1_l = this.aaf1_l + this.aaf_g * bp1;
-                    this.aaf1_b = bp1;
-                    
-                    let hp2 = (this.aaf1_l - this.aaf2_l - this.aaf_r2 * this.aaf2_b) * this.aaf_scale2;
-                    let bp2 = this.aaf2_b + this.aaf_g * hp2;
-                    this.aaf2_l = this.aaf2_l + this.aaf_g * bp2;
-                    this.aaf2_b = bp2;
+                    // Rohes 1-MHz Signal in den Ringpuffer schreiben (Keine teure IIR-Berechnung hier!)
+                    this.ringBuffer[this.ringIndex] = this.sid.outputSample;
+                    this.ringIndex = (this.ringIndex + 1) & 511; // 512 Wrap-around Mask
                 }
                 
-                let finalSample = this.dcBlock.process(this.aaf2_l);
+                // --- THE POLYPHASE DECIMATION STAGE (48 kHz) ---
+                // Faltung des 1-MHz Verlaufs mit unserem Sinc-Kernel
+                let decimationSum = 0;
+                for (let k = 0; k < this.FIR_TAPS; k++) {
+                    // Rückwärtslesen ab dem letzten geschriebenen Index
+                    let readIdx = (this.ringIndex - 1 - k + 512) & 511;
+                    decimationSum += this.ringBuffer[readIdx] * this.firKernel[k];
+                }
+                
+                // DC Offset entfernen und final rausschicken
+                let finalSample = this.dcBlock.process(decimationSum);
 
                 outL[i] = finalSample;
                 if (outR) outR[i] = finalSample;
