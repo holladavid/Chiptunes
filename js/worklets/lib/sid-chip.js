@@ -1,14 +1,15 @@
 // === js/worklets/lib/sid-chip.js ===
-// ==========================================
+// =========================================================
 // MOS Technology SID 6581 Sound Chip Emulation
-// Phase 4: Non-linear DAC Crunch, Asymmetric JFETs & FET-LUT Polynomial
-// ==========================================
+// Phase 6: ADSR Pipeline Delay & True Sustain-Drop Hardware Bug
+// =========================================================
 
 import { calculateWaveform8Bit } from './sid-waveforms.js';
+import { DAC_LUT, CUTOFF_LUT } from './sid-luts.js';
 
-const ENV_ATTACK = 0, ENV_DECAY = 1, ENV_SUSTAIN = 2, ENV_RELEASE = 3;
+// DSP UPGRADE: Es gibt keinen Sustain-State in Hardware!
+const ENV_ATTACK = 0, ENV_DECAY = 1, ENV_RELEASE = 2; 
 const RATE_COUNTER_PERIOD = [9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19530, 31256];
-const PHASE_SCALE = 1.0 / 16777216.0;
 
 export class SIDChip {
     constructor() {
@@ -52,10 +53,6 @@ export class SIDChip {
         let norm = cutoffReg / 2047.0;
         let thermalCoefficient = 1.0 - (this._temperature - 55.0) * 0.0035;
 
-        // --- PHASE 4: Nichtlineares FET-Polynom (Gemessene Cutoff-Kurve) ---
-        // Statt einem simplen Math.pow nutzen wir ein Polynom 3. Grades, das die reale
-        // analoge Steuerspannungskennlinie der 6581 JFET-Transistoren nachempfindet.
-        // Extrem flacher Anlauf bei tiefen Bässen, exponentieller Schuss in den Höhen!
         let fetCurve = 30.0 + 250.0 * norm + 8000.0 * (norm * norm) + 8000.0 * (norm * norm * norm);
         
         this.activeCutoff = fetCurve * thermalCoefficient;
@@ -88,9 +85,21 @@ export class SIDChip {
             let gate = (ch.ctrl & 1) !== 0;
             let prevGate = (prevCtrl & 1) !== 0;
             
+            // =========================================================
+            // DSP UPGRADE: ADSR PIPELINE DELAY & COUNTER RESET
+            // =========================================================
             if (gate !== prevGate) {
+                // Pipeline Delay für exakt 1 Cycle
                 ch.envDelay = 1;
                 ch.state = gate ? ENV_ATTACK : ENV_RELEASE;
+                
+                // Hardware-Bug: Gate-On friert nicht nur ein, es resettet 
+                // den Rate-Counter! Dadurch schlägt jeder Kickdrum-Attack
+                // phasenstarr und knackig ein, ohne auf Reste zu warten.
+                if (gate) {
+                    ch.rate_counter = ch.attack_period;
+                    ch.exponential_counter = 0;
+                }
             }
             ch.prevGate = gate;
 
@@ -125,21 +134,15 @@ export class SIDChip {
             return;
         }
 
-        if (ch.state === ENV_SUSTAIN) {
-            ch.envelope_counter = ch.sustain_level;
-            return;
-        }
+        let ratePeriod = ch.release_period;
+        if (ch.state === ENV_ATTACK) ratePeriod = ch.attack_period;
+        else if (ch.state === ENV_DECAY) ratePeriod = ch.decay_period;
 
-        let ratePeriod = 9;
-        switch (ch.state) {
-            case ENV_ATTACK:  ratePeriod = ch.attack_period; break;
-            case ENV_DECAY:   ratePeriod = ch.decay_period; break;
-            case ENV_RELEASE: ratePeriod = ch.release_period; break;
-        }
-
+        ch.rate_counter--;
         if (ch.rate_counter <= 0) {
-            ch.rate_counter += ratePeriod; 
+            ch.rate_counter = ratePeriod; // Wrap-around des 15-Bit Counters
 
+            // Der pseudo-exponentielle Divider des SID
             let expPeriod = 1;
             if (ch.state !== ENV_ATTACK) {
                 let envVal = ch.envelope_counter;
@@ -162,11 +165,15 @@ export class SIDChip {
                         ch.state = ENV_DECAY;
                     }
                 } else if (ch.state === ENV_DECAY) {
-                    let sustainVal = ch.sustain_level;
-                    if (ch.envelope_counter > sustainVal) {
-                        ch.envelope_counter--;
-                    } else {
-                        ch.state = ENV_SUSTAIN;
+                    // =========================================================
+                    // DSP UPGRADE: SUSTAIN DROP BUG (NO SUSTAIN STATE)
+                    // =========================================================
+                    // Der SID stoppt das Decay lediglich, wenn envelope == sustain_level.
+                    // Wenn der Coder das Sustain-Level nachträglich ändert und
+                    // die Hüllkurve die Gleichheit verfehlt, bricht der Wert
+                    // gnadenlos bis auf 0 ein (Sustain Drop Bug).
+                    if (ch.envelope_counter !== ch.sustain_level) {
+                        if (ch.envelope_counter > 0) ch.envelope_counter--;
                     }
                 } else if (ch.state === ENV_RELEASE) {
                     if (ch.envelope_counter > 0) {
@@ -175,7 +182,6 @@ export class SIDChip {
                 }
             }
         }
-        ch.rate_counter--;
     }
 
     synthesizeVoiceOneCycle(v) {
@@ -212,15 +218,8 @@ export class SIDChip {
         ch.waveOut8Bit = calculateWaveform8Bit(ch.ctrl, ch.phase, ch.pw, ch.lfsr, ringMSB);
         ch.env8Bit = ch.envelope_counter;
 
-        // --- PHASE 4: Nichtlinearer DAC Crunch (D/A Wandler Sättigung) ---
-        // Der 6581 DAC ist fehlerhaft. Die Toleranzen im R-2R-Netzwerk beulen
-        // die Lautstärkekurven in der Mitte leicht aus.
-        let envNorm = ch.env8Bit / 255.0;
-        let waveNorm = ch.waveOut8Bit / 255.0;
-
-        // "Bowing" (Verbiegen) der linearen Kennlinie durch eine Parabel-Funktion
-        let envDac = envNorm + 0.15 * envNorm * (1.0 - envNorm);
-        let waveDac = waveNorm + 0.1 * waveNorm * (1.0 - waveNorm);
+        let envDac = DAC_LUT[ch.env8Bit];
+        let waveDac = DAC_LUT[ch.waveOut8Bit];
 
         let waveOutFloat = (waveDac * 2.0) - 1.0;
         return waveOutFloat * envDac;
@@ -263,14 +262,11 @@ export class SIDChip {
         this.filterLow = lp;
         
         if (this.useJfetSaturation) {
-            // --- PHASE 4: Asymmetrisches JFET Clipping ---
-            // Simuliert die ungleichen positiven/negativen Spannungsabfälle des echten Operationsverstärkers.
-            // Positives Signal (oben) clippt hart und früh. Negatives (unten) weich und spät.
-            // Generiert warme, analoge Even-Harmonics.
+            // Stabiles asymmetrisches Clipping ohne Latch-Up
             if (bp > 0) {
-                this.filterBand = Math.tanh(bp / 2.0) * 2.0; 
+                this.filterBand = Math.tanh(bp * 0.8) / 0.8;
             } else {
-                this.filterBand = Math.tanh(bp / 3.0) * 3.0; 
+                this.filterBand = Math.tanh(bp * 1.5) / 1.5;
             }
         } else {
             this.filterBand = bp / (1.0 + Math.abs(bp) * 0.15); 
@@ -288,7 +284,16 @@ export class SIDChip {
 
         let leakage = filteredSum * 0.11;
         let filteredMix = filterOut + leakage;
-        let finalMix = (unfilteredSum + filteredMix) / 3.0;
+
+        let rawSum = unfilteredSum + filteredMix;
+        let vcaIn = rawSum * 0.42; 
+        
+        // VCA Warmth mit 2nd Harmonics Growl
+        let vcaQuad = this.useJfetSaturation ? (0.05 * Math.pow(vcaIn, 2)) : 0;
+        
+        let finalMix = vcaIn > 0 
+            ? Math.tanh(vcaIn + vcaQuad) 
+            : Math.tanh(vcaIn * 0.85 + vcaQuad) / 0.85;
 
         let dcLeakage = (this.masterVol - 0.5) * 1.5;
         this.outputSample = (finalMix * this.masterVol) + dcLeakage;

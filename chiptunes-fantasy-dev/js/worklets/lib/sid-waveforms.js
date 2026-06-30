@@ -1,14 +1,15 @@
 // === js/worklets/lib/sid-waveforms.js ===
 // =========================================================
 // MOS 6581 WAVEFORM GENERATOR & BIT-LOGIC
-// Phase 3 (Dark Magic): Illegal Opcodes & Analog Wire-Shorts Matrix
+// Hardware-accurate 8-Bit DAC quantization & Floating DC Bias
+// Phase 5: Analog Wire-AND Simulation for Illegal Waveforms
 // =========================================================
 
-import { PWM_LUT } from './sid-luts.js';
-
-export function calculateWaveform8Bit(ch, ctrl, phase24, pw12, lfsr23, ringMSB) {
-    let out = 0xFF; 
+export function calculateWaveform8Bit(ctrl, phase24, pw12, lfsr23, ringMSB) {
     let hasWave = false;
+    
+    // Basis-Wellenformen in 8-Bit berechnen
+    let tri = 0xFF, saw = 0xFF, pulse = 0xFF, noise = 0xFF;
 
     // 1. Die vier Basis-Wellenformen (Hardware-Quantisiert)
     if (ctrl & 16) { 
@@ -16,66 +17,85 @@ export function calculateWaveform8Bit(ch, ctrl, phase24, pw12, lfsr23, ringMSB) 
         if (ctrl & 4) bit23 ^= ringMSB;
 
         let tri12 = (phase24 >> 11) & 0xFFF;
-        if (bit23) tri12 = (~tri12) & 0xFFF;
-        
-        out &= (tri12 >> 4);
+        if (ringMSB) tri12 = (~tri12) & 0xFFF;
+        tri = tri12 >> 4;
         hasWave = true;
     }
 
-    if (ctrl & 32) { 
-        out &= (phase24 >> 16) & 0xFF;
+    if (ctrl & 32) {
+        saw = (phase24 >> 16) & 0xFF;
         hasWave = true;
     }
 
     if (ctrl & 64) { 
         let testPhase = (phase24 >> 12) & 0xFFF;
-        let effectivePw = PWM_LUT[pw12];
-        out &= (testPhase <= effectivePw) ? 0xFF : 0x00;
+        pulse = (testPhase <= pw12) ? 0xFF : 0x00;
         hasWave = true;
     }
 
-    if (ctrl & 128) { 
-        let noiseOut = ((lfsr23 & 0x400000) >> 15) | 
-                       ((lfsr23 & 0x100000) >> 14) | 
-                       ((lfsr23 & 0x010000) >> 11) | 
-                       ((lfsr23 & 0x002000) >>  9) | 
-                       ((lfsr23 & 0x000800) >>  8) | 
-                       ((lfsr23 & 0x000080) >>  5) | 
-                       ((lfsr23 & 0x000010) >>  3) | 
-                       ((lfsr23 & 0x000004) >>  2);  
-        out &= noiseOut;
+    if (ctrl & 128) {
+        noise = ((lfsr23 & 0x400000) >> 15) | 
+                ((lfsr23 & 0x100000) >> 14) | 
+                ((lfsr23 & 0x010000) >> 11) | 
+                ((lfsr23 & 0x002000) >>  9) | 
+                ((lfsr23 & 0x000800) >>  8) | 
+                ((lfsr23 & 0x000080) >>  5) | 
+                ((lfsr23 & 0x000010) >>  3) | 
+                ((lfsr23 & 0x000004) >>  2);  
         hasWave = true;
     }
 
-    // --- PHASE 3: ILLEGAL OPCODES (ANALOG DIE SHORTS) ---
-    // Wenn mehrere Wellen kombiniert werden, entsteht ein physischer Kurzschluss.
-    // Die schwächeren Pull-Up-Widerstände kollabieren, die Amplitude bricht ein
-    // und erzeugt einen spezifischen Gleichspannungs-Sprung (DC-Offset).
-    if (hasWave) {
-        let waveCombine = ctrl & 0x70; // Filtert Tri (16), Saw (32), Pulse (64)
-        
-        if (waveCombine === 0x30) { // Tri + Saw
-            // Amplitude bricht stark ein, Signal driftet nach oben
-            out = (out >> 1) + 0x18; 
-        } 
-        else if (waveCombine === 0x50) { // Tri + Pulse
-            // Dreieck wird vom Puls massiv verzerrt und gestaucht
-            out = (out >> 1) + 0x20;
-        } 
-        else if (waveCombine === 0x60) { // Saw + Pulse
-            out = (out >> 1) + 0x10;
-        } 
-        else if (waveCombine === 0x70) { // Tri + Saw + Pulse
-            // Totaler Kurzschluss: Signal flacht fast komplett ab (extrem leise)
-            out = (out >> 2) + 0x28;
-        }
-
-        ch.floatingLevel = out;
-    } else {
-        // Floating DAC: Zieht sich langsam in Richtung 0x18 Leckstrom
-        ch.floatingLevel += (0x18 - ch.floatingLevel) * 0.0002;
-        out = Math.round(ch.floatingLevel);
+    // --- Floating DAC DC-Bias ---
+    // Wenn keine Welle selektiert ist, fällt der SID nicht auf absolute Null ab.
+    // Die analogen DAC-Gatter "floaten" und erzeugen eine Restgleichspannung.
+    if (!hasWave) {
+        return 0x18; 
     }
+    
+    // --- SINGLE WAVEFORMS (Fast Path) ---
+    let waveMask = ctrl & 0xF0;
+    if (waveMask === 0x10) return tri;
+    if (waveMask === 0x20) return saw;
+    if (waveMask === 0x40) return pulse;
+    if (waveMask === 0x80) return noise;
 
-    return out;
+    // =========================================================
+    // DSP UPGRADE: ANALOG WIRE-AND SIMULATION (Illegal Waves)
+    // =========================================================
+    
+    let bitAnd = 0xFF;
+    let sum = 0;
+    let count = 0;
+    
+    if (ctrl & 16) { bitAnd &= tri; sum += tri; count++; }
+    if (ctrl & 32) { bitAnd &= saw; sum += saw; count++; }
+    if (ctrl & 64) { bitAnd &= pulse; sum += pulse; count++; }
+    if (ctrl & 128) { bitAnd &= noise; sum += noise; count++; }
+    
+    let avg = sum / count;
+    
+    // Ein pures bitweises AND (`bitAnd`) ist viel zu leise, da eine digitale '0'
+    // eine '1' sofort zerstört. Da die NMOS-Transistoren im 6581 Widerstand haben,
+    // mischen wir 22% der "verlorenen" Energie (Differenz zum Durchschnitt) wieder
+    // als Leakage/Bleed in das Signal ein.
+    let bleed = (avg - bitAnd) * 0.22; 
+    
+    // Die Puls-Welle hat im SID-Chip einen viel größeren Pull-Down-Transistor.
+    // Wenn Puls aktiv ist und auf GND (0V) zieht, "gewinnt" es den Kurzschluss
+    // und zerschmettert das Leakage der anderen Wellen massiv. Das erzeugt
+    // das klassische, kratzige "Snappen" der MoN-Drums.
+    if ((ctrl & 64) && pulse === 0) {
+        bleed *= 0.15; 
+    }
+    
+    let out = bitAnd + bleed;
+    
+    // Gekoppelte Wellenformen haben hardwarebedingt einen Lautstärkeabfall
+    // und landen auf einem leichten DC-Offset.
+    out = (out * 0.75) + 0x15; 
+    
+    if (out > 255) out = 255;
+    if (out < 0) out = 0;
+    
+    return Math.floor(out);
 }
