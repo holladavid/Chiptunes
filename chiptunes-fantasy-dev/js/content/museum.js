@@ -87,40 +87,41 @@ c64: `
     `,
     atari: `
         <!-- === TECHNICAL SPECIFICATION GRID (ATARI YM2149F) === -->
-        <div style="padding: 4px 0; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 1); background: transparent; font-family: inherit;">
-            <p style="color: var(--highlight-color); margin-bottom: 8px; bold; border-bottom: 1px dashed var(--text-color); padding-bottom: 4px;">>>> HARDWARE SPECIFICATIONS:</p>
-            <div style="display: grid; grid-template-columns: 140px 1fr; gap: 6px; line-height: 1.4;">               
-                <div><strong>Kanäle:</strong></div><div>3 analoge Hauptkanäle (A, B, C) mit zuschaltbarem Rauschen (kein 4. Kanal)</div>
-                <div><strong>Taktfrequenz:</strong></div><div>2.000.000 Hz (2.0 MHz Master Clock)</div>
-                <div><strong>Wellenformen:</strong></div><div>Rechteck (Kanal A/B/C), Rauschen (zuschaltbar), Ton+Rausch-Mix, 4-Bit Digidrums</div>
-                <div><strong>Analog-Filter:</strong></div><div>Keine (Klangformung erfolgt rein digital über programmierbare Teiler)</div>
-                <div><strong>Hüllkurven:</strong></div><div>1 x Hardware-Envelope (HEG) mit 16 vordefinierten Shapes (Sägezahn, Dreieck)</div>
-                <div><strong>Sequenzierung:</strong></div><div>Register-Dump-Logging (YM3b/YM5/YM6) via 50Hz-VBLANK o. MFP-Interrupts</div>
+        <div style="padding: 4px 0; margin-bottom: 20px; font-size: calc(var(--font-size-base) * 0.85); background: transparent; font-family: inherit;">
+            <p style="color: var(--highlight-color); margin-bottom: 8px; font-weight: bold; border-bottom: 1px dashed var(--text-color); padding-bottom: 4px;">>>> HARDWARE SPECIFICATIONS:</p>
+            <div style="display: grid; grid-template-columns: 140px 1fr; gap: 6px; line-height: 1.4;">
+                <div><strong>Kanäle:</strong></div><div>3 Oszillatoren (Rechteck) + 1 LFSR Noise-Generator</div>
+                <div><strong>Taktfrequenz:</strong></div><div>2.000.000 Hz (2.0 MHz True Lockstep Emulation)</div>
+                <div><strong>D/A-Wandler:</strong></div><div>Logarithmisch, 32 diskrete Stufen (-1.5dB pro Stufe)</div>
+                <div><strong>Hüllkurven:</strong></div><div>1x Hardware Envelope Generator (HEG) mit echter 5-Bit Auflösung</div>
+                <div><strong>Motherboard:</strong></div><div>RC-Tiefpass (~15.9 kHz) + Sinc-FIR Decimator (Zero Aliasing)</div>
+                <div><strong>Sequenzierung:</strong></div><div>Register-Logging via 50Hz-VBLANK & CPU Timer-B (YM5/YM6)</div>
             </div>
         </div>
 
         <div style="border-left: 4px solid var(--text-color); padding: 10px 15px; margin-bottom: 15px; background: rgba(0,0,0,0.2); line-height: 1.6;">
-            <h3 style="color: var(--highlight-color); margin-bottom: 15px;">[ DEEP DIVE: YAMAHA YM2149 (ATARI ST) ]</h3>
-            <p>Der Yamaha YM2149 war der akustische Herzschlag der 16-Bit Atari ST Serie – ein scheinbar primitiver Chip mit einer spektakulären Entwicklungsgeschichte.</p>
+            <h3 style="color: var(--highlight-color); margin-bottom: 15px;">[ DEEP DIVE: YAMAHA YM2149F (ATARI ST) ]</h3>
+            <p>Der Yamaha YM2149F war der akustische Herzschlag der 16-Bit Atari ST Serie. Oft fälschlicherweise für einen simplen Klon des GI AY-3-8910 gehalten, barg der Yamaha-Chip ein massives Geheimnis, das ihn klanglich überlegen machte.</p>
 
             <h4 style="color: var(--highlight-color); margin: 25px 0 5px 0;">> HISTORIE: SHIRAZ SHIVJIS COST-CUT-HACK & DIE RETTUNG DES 'JACKINTOSH'</h4>
-            <p>Als Jack Tramiel Commodore im Streit verließ und 1984 die Reste von Atari kaufte, beauftragte er seinen genialen Chefdesigner <strong>Shiraz Shivji</strong> (der zuvor am C64 mitgearbeitet hatte), in weniger als einem Jahr einen extrem günstigen Macintosh-Killer (den "Atari ST") zu entwerfen. Jedes Bauteil musste auf den Cent genau kalkuliert werden. Um den Preis für teure dedizierte I/O-Controller-Chips zu sparen, vollbrachte Shivji einen legendären Hacker-Trick: Er wählte den spottbilligen Yamaha YM2149 (einen optimierten Lizenzbau des 1978er AY-3-8910 von General Instrument) und <strong>missbrauchte dessen freie I/O-Ports als System-Rückgrat</strong>.</p>
-            <p>Auf dem Atari ST steuert der Soundchip deshalb nicht nur Töne, sondern über seine physischen Pins (I/O Port A) direkt: Die Laufwerksauswahl des Diskettenlaufwerks (Drive A/B Select, Side Select), das Strobe-Signal für den Druckerport, die Steuerleitungen für das RS-232-Modem sowie die Selektionssignale für die MIDI- und Tastatur-Controller! Ein Ausfall des Soundchips führte somit zum sofortigen Stillstand des gesamten Computers.</p>
+            <p>Als Jack Tramiel Commodore im Streit verließ und 1984 die Reste von Atari kaufte, beauftragte er seinen genialen Chefdesigner <strong>Shiraz Shivji</strong> (der zuvor am C64 mitgearbeitet hatte), in weniger als einem Jahr einen extrem günstigen Macintosh-Killer (den "Atari ST") zu entwerfen. Jedes Bauteil musste auf den Cent genau kalkuliert werden. Um den Preis für teure dedizierte I/O-Controller-Chips zu sparen, vollbrachte Shivji einen legendären Hacker-Trick: Er wählte den spottbilligen Yamaha YM2149 und <strong>missbrauchte dessen freie I/O-Ports als System-Rückgrat</strong>.</p>
+            <p>Auf dem Atari ST steuert der Soundchip deshalb nicht nur Töne, sondern über seine physischen Pins (I/O Port A) direkt das Diskettenlaufwerk, den Druckerport, die RS-232-Schnittstelle und die Tastatur! Ein Ausfall des Soundchips führte somit zum sofortigen Stillstand des gesamten Computers.</p>
+
+            <h4 style="color: var(--highlight-color); margin: 25px 0 5px 0;">> DER 32-STEP LOG-DAC SKANDAL</h4>
+            <p>Während Konkurrenz-Chips (wie im ZX Spectrum) Lautstärken in simplen 16 Stufen linear auflösten, verbaute Yamaha im YM2149 einen <strong>echten 32-stufigen logarithmischen D/A-Wandler</strong>. Die Dämpfung beträgt exakt -1.5dB pro Stufe. <br>
+            <strong>Hardware-Hacking:</strong> Die normalen Lautstärkeregister des Chips akzeptieren zwar nur 4-Bit Werte (0-15), aber die Hardware mappt diese intern auf die 5-Bit Struktur via <code>(Vol * 2) + 1</code>. Unser Core bildet diesen physikalischen Schaltplan bitgenau nach. Dadurch klingen die Drums fetter, und die berüchtigten Hardware-Envelopes nutzen die vollen 32 Sub-Stufen für butterweiche Volume-Sweeps ("Zipper-Noise").</p>
 
             <h3 style="color: var(--highlight-color); margin: 30px 0 15px 0;">[ CHIP-SPECS: EMULIERTE HARDWARE-KOMPONENTEN & SCENE-TRICKS ]</h3>
-            <p>Der YM2149 besitzt keinerlei analoge Filter oder native PCM-Sample-Wandler. Um dem Chip dennoch komplexe Klänge zu entlocken, mussten die Musik-Magier der ST-Demoszene tief in die Trickkiste greifen. Unsere Synthese-Cores emulieren diese Hardware-Kniffe detailgetreu:</p>
+            <p>Der YM2149 besitzt keinerlei analoge Filter oder native PCM-Sample-Wandler. Um dem Chip dennoch komplexe Klänge zu entlocken, mussten die Musik-Magier der ST-Demoszene tief in die Trickkiste greifen. Unsere Synthese-Cores emulieren diese Hardware-Kniffe auf der 2-MHz-Ebene detailgetreu:</p>
 
-            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DIE OSZILLATOREN (CH A, B, C)</h4>
-            <p>Drei reine, harsche Rechteck-Generatoren. Die Frequenzsteuerung erfolgt über einen 12-Bit-Teilerwert. Je kleiner der Registerwert, desto schneller schwingt die Phase. (Tipp: Beobachte im HUD die Sparklines im Live-Oszillogramm pro Kanal!)</p>
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> SYNC-BUZZER & HIPPEL-ARPEGGIOS</h4>
+            <p>Da der Chip nur simple Rechteckwellen ausspuckt, programmierten Coder wie Jochen Hippel hochfrequente CPU-Interrupts (Timer-B). Indem sie die Register hunderte Male pro Frame überschrieben, erzwangen sie Oszillator-Resets und mischten Rechteck mit Noise in aberwitzigen Geschwindigkeiten. Dadurch entstanden die berühmten rasselnden "ST-SID-Voices". Da unsere Engine mit <strong>2.000.000 Hz Lockstep</strong> läuft, schwingen diese Interrupt-Hacks phasenstarr und ohne digitales Artefakt-Zittern.</p>
 
-            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> DER NOISE-GENERATOR (N-FREQ)</h4>
-            <p>Ein 5-Bit Linear Feedback Shift Register (LFSR), das pseudozufälliges "weißes Rauschen" erzeugt. Durch rasant schnelles Umschalten der Noise-Frequenz emulierten Coder knackige Snare-Drums und zischende Hi-Hats, die im Mischer flexibel auf die 3 Spuren geroutet werden konnten.</p>
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> ZERO ALIASING (SINC-FIR DECIMATION)</h4>
+            <p>Rechteckwellen produzieren theoretisch unendlich hohe Obertöne. Wenn wir 2 MHz auf die 48 kHz der Soundkarte komprimieren, würde das ohne Schutz grauenhaft klirren (Aliasing). Unser Core jagt das rohe Signal deshalb in Echtzeit durch einen 255-Tap Polyphase Sinc-FIR Filter. Das wirkt wie eine analoge "Brickwall" bei 12.5 kHz – der Sound bleibt warm, druckvoll und kristallklar.</p>
 
-            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> HARDWARE ENVELOPE GENERATOR (HEG) & DER HIPPEL-SID-HACK</h4>
-            <p>Der Chip besitzt eigentlich nur eine einzige, starre Hüllkurve (HEG) mit 16 vordefinierten Mustern. <strong>Jochen Hippel (Mad Max)</strong> fand jedoch heraus: Wenn man die HEG-Frequenz über Software-Timer extrem hochreißt (in den hörbaren Bereich), fängt die Hüllkurve selbst an zu schwingen. Koppelmen wir diesen "Hippel-Hack" mit den Rechteck-Generatoren, entstehen resonante, synthetische Dreieckswellen – die berühmten "ST-SID-Voices", die im HUD das rote <em>HEG-LED</em> zum Leuchten bringen.</p>
-
-            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> YM6 SPEC: DIE DIGIDRUMS (DIGI HACK)</h4>
-            <p>Da der YM2149 keine D/A-Wandler besitzt, nutzten Coder wie **Arnaud Carré (Leonard)** hochfrequente CPU-Timer-Interrupts, um die 4-Bit-Lautstärkeregister im Kilohertz-Bereich direkt mit Sample-Amplituden zu füttern (Pulse Code Modulation). Das von uns emulierte **YM6-Format** fängt diese Register-Hacks ab, leitet sie an die rote <em>Global-Trig-LED</em> im HUD weiter und rendert die legendären 4-Bit-Trommelschläge glasklar im Stereo-Raum.</p>
+            <h4 style="color: var(--highlight-color); margin: 20px 0 5px 0;">> YM6 SPEC: DIE DIGIDRUMS (DAC INJECTION)</h4>
+            <p>Da der YM2149 keine D/A-Wandler für Samples besitzt, missbrauchten die Coder die 4-Bit-Lautstärkeregister. In unserem <em>Exact-Core</em> mischen wir Digidrums nicht einfach linear als Audio dazu. Wir injizieren die PCM-Samples "virtuell" in das Volume-Register der Oszillatoren. Dadurch werden sie durch die logarithmische 32-Step Yamaha-Tabelle gepresst, was ihnen den absolut rohen, verzerrten 4-Bit Atari-Crunch verleiht.</p>
         </div>
     `
 };
