@@ -1,7 +1,7 @@
 // === js/visuals/gimmicks/copperbars.js ===
 // =========================================================
 // REAL-TIME COPPERBARS (RASTERBARS) COMPONENT
-// Scanline Quantization & 12-Bit Color Depth Simulation
+// System-Specific Color Banding & Audio-Reactive Amplitude
 // =========================================================
 
 export class Copperbars {
@@ -11,7 +11,6 @@ export class Copperbars {
         this.baseThickness = [18, 14, 12, 10]; 
         this.heightWeights = [0.28, 0.33, 0.22, 0.25];
         
-        // Cache, um teure Hex-String-Parsings in der Renderschleife zu verhindern
         this.colorCache = {};
     }
 
@@ -25,7 +24,7 @@ export class Copperbars {
         return rgb;
     }
 
-    drawCopperbar(ctx, w, y, height, volume, hexStart, hexEnd) {
+    drawCopperbar(ctx, w, y, height, volume, hexStart, hexEnd, scanlineHeight, colorBitShift) {
         if (volume <= 0.01) return;
         
         const cS = this.hexToRgb(hexStart);
@@ -33,24 +32,18 @@ export class Copperbars {
         const cBlk = [0, 0, 0];
         const cWht = [255, 255, 255];
         
-        // =========================================================
-        // GFX UPGRADE: SCANLINE QUANTIZATION
-        // Ein Rasterbar ist auf modernen Monitoren ca. 4 Pixel dick, 
-        // um die tiefe 320x200 CRT-Auflösung zu simulieren.
-        // =========================================================
-        const scanlineHeight = 4; 
         const steps = Math.max(1, Math.floor(height / scanlineHeight));
         
         for(let i = 0; i <= steps; i++) {
-            let t = i / steps; // Normalisierte Position im Bar (0.0 bis 1.0)
+            let t = i / steps; 
             let r, g, b;
             
-            // Linear Interpolation (Lerp) der 5 Gradienten-Wegpunkte
+            // Linear Interpolation der Wegpunkte
             if (t < 0.18) {
                 let n = t / 0.18;
                 r = cBlk[0] + (cS[0] - cBlk[0]) * n;
                 g = cBlk[1] + (cS[1] - cBlk[1]) * n;
-                b = cBlk[2] + (cS[2] - cBlk[2]) * n;
+                b = cBlk[2] + (cBlk[2] - cBlk[2]) * n; 
             } else if (t < 0.5) {
                 let n = (t - 0.18) / 0.32;
                 r = cS[0] + (cWht[0] - cS[0]) * n;
@@ -69,17 +62,17 @@ export class Copperbars {
             }
             
             // =========================================================
-            // GFX UPGRADE: 12-BIT COLOR BANDING (Amiga OCS Simulation)
-            // Wir zerschneiden die 256 Farbstufen pro Kanal per Bitmaske (& 0xF0)
-            // auf nur 16 Stufen (4-Bit) und doppeln sie (>> 4), um die Leuchtkraft zu erhalten.
+            // GFX UPGRADE: SYSTEM-SPECIFIC COLOR DEPTH
+            // Wir quantisieren die Farbe hart durch Bit-Shifting, basierend
+            // auf der Architektur des aktiven Rechners.
             // =========================================================
-            let r4 = (r | 0) & 0xF0; r4 |= (r4 >> 4);
-            let g4 = (g | 0) & 0xF0; g4 |= (g4 >> 4);
-            let b4 = (b | 0) & 0xF0; b4 |= (b4 >> 4);
+            let mask = (0xFF >> colorBitShift) << colorBitShift;
+            let r_q = (r | 0) & mask; r_q |= (r_q >> (8 - colorBitShift));
+            let g_q = (g | 0) & mask; g_q |= (g_q >> (8 - colorBitShift));
+            let b_q = (b | 0) & mask; b_q |= (b_q >> (8 - colorBitShift));
             
-            ctx.fillStyle = `rgb(${r4}, ${g4}, ${b4})`;
+            ctx.fillStyle = `rgb(${r_q}, ${g_q}, ${b_q})`;
             
-            // Zeichne den harten horizontalen Scanline-Block
             let drawY = Math.floor(y + i * scanlineHeight);
             ctx.fillRect(0, drawY, w, scanlineHeight);
         }
@@ -88,6 +81,7 @@ export class Copperbars {
     render(ctx, width, height, t, channelVolumes) {
         const isAmiga = document.body.classList.contains('theme-amiga');
         const isAtari = document.body.classList.contains('theme-atari');
+        const isC64 = document.body.classList.contains('theme-c64');
         
         const numBars = isAmiga ? 4 : 3;
         const pals = [
@@ -97,13 +91,40 @@ export class Copperbars {
             isAmiga ? ['#111111', '#888888'] : []
         ];
 
+        // =========================================================
+        // GFX UPGRADE: DYNAMIC SYSTEM RESOLUTION & COLOR DEPTH
+        // Amiga: 12-Bit OCS (BitShift 4), glatte 4px Scanlines
+        // Atari: 9-Bit (BitShift 5), glatte 4px Scanlines
+        // C64: Brutale 16-Farben Näherung (BitShift 6), fette 8px Interrupt-Rasterbars
+        // =========================================================
+        let scanlineHeight = 4;
+        let colorBitShift = 4; // 12-Bit default
+        
+        if (isAtari) {
+            colorBitShift = 5; // 9-Bit Atari ST Palette (8 Stufen pro RGB-Kanal)
+        } else if (isC64) {
+            scanlineHeight = 8; // Raster-Interrupts auf dem C64 kosteten Zeit, Balken waren dicker!
+            colorBitShift = 6;  // Brutale 4 Stufen pro RGB-Kanal zur Simulation der knappen C64 Palette
+        }
+
         ctx.globalCompositeOperation = "screen"; 
         for (let c = 0; c < numBars; c++) {
             const vol = channelVolumes[c] || 0;
-            const punch = vol * 28; 
             
-            const yCenter = (height / 2) + Math.sin(t * this.sinTimes[c] + this.sinOffsets[c]) * (height * this.heightWeights[c]);
-            this.drawCopperbar(ctx, width, yCenter - (this.baseThickness[c] + punch) / 2, this.baseThickness[c] + punch, vol, pals[c][0], pals[c][1]);
+            // =========================================================
+            // AUDIO-REACTIVE UPGRADE: NON-LINEAR PUNCH & Y-BOUNCE
+            // =========================================================
+            // Durch Math.pow(x, 1.5) reagiert der Balken viel explosiver auf Kicks (Transienten) 
+            // und fällt schneller ab, was "snappier" aussieht.
+            const punch = Math.pow(vol, 1.5) * 45; 
+            
+            // Audio-Reactive Amplitude: Die Auslenkung (Y-Bounce) der Sinuswelle 
+            // weitet sich synchron zur Lautstärke aus!
+            const dynamicAmplitude = (height * this.heightWeights[c]) + (punch * 1.5);
+            
+            const yCenter = (height / 2) + Math.sin(t * this.sinTimes[c] + this.sinOffsets[c]) * dynamicAmplitude;
+            
+            this.drawCopperbar(ctx, width, yCenter - (this.baseThickness[c] + punch) / 2, this.baseThickness[c] + punch, vol, pals[c][0], pals[c][1], scanlineHeight, colorBitShift);
         }
         ctx.globalCompositeOperation = "source-over";
     }
