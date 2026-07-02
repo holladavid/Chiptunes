@@ -122,10 +122,11 @@ export function initVisuals(stateGetters, callbacks) {
             if (isC64) starfield.render(ctx, canvas.width, canvas.height, t, avgVol);
             else if (isAmiga) cube.render(ctx, canvas.width, canvas.height, t, channelVolumes[0] || 0);
             else if (isAtari) bobs.render(ctx, canvas.width, canvas.height, t, avgVol);
-        }
 
-        // --- 2. COPPERBARS (Rasterbars) ---
-        coppers.render(ctx, canvas.width, canvas.height, t, channelVolumes);
+            // --- 2. COPPERBARS (Rasterbars) ---
+            // GFX UPGRADE: Werden nun NUR noch gezeichnet, wenn das Easter-Egg aktiv ist!
+            coppers.render(ctx, canvas.width, canvas.height, t, channelVolumes);
+        }
 
         // --- 3. STANDARD CHANNELS (Nur aktiv wenn Gimmick aus) ---
         if (!showGimmick) {
