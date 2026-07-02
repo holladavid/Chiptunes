@@ -2,19 +2,16 @@
 // =========================================================
 // REAL-TIME COPPERBARS (RASTERBARS) COMPONENT
 // Pseudo-3D Z-Buffer Sorting (Helix Orbit) & Depth Shading
-// Safe Performance Edition (Hoisted Arrays, True Math, Snappy Decay)
+// Symmetrical Phase-Staggering (Non-Clumping DNA Helix)
 // =========================================================
 
 export class Copperbars {
     constructor() {
-        this.sinTimes = [0.6, 0.85, 0.7, 0.95];
-        this.sinOffsets = [0.0, 2.0, 4.0, 1.5];
-        
-        // GFX UPGRADE: Exakt 20% dünner für eine filigranere, aufgeräumtere Optik
-        // Werte auf perfekte 8-Bit-Grenzen angepasst: [128, 96, 72, 56]
+        // Filigranes Amiga-Mittelmaß (20% dünner)
         this.baseThickness = [128, 96, 72, 56]; 
         
-        this.heightWeights = [0.25, 0.28, 0.20, 0.22];
+        // Die Amplituden-Auslenkung leicht vereinheitlicht für symmetrischen Orbit
+        this.heightWeights = [0.24, 0.24, 0.24, 0.24];
         this.colorCache = {};
         this.smoothedVols = [0, 0, 0, 0];
     }
@@ -38,12 +35,6 @@ export class Copperbars {
         const cWht = [255, 255, 255];
         
         const steps = Math.max(1, Math.floor(height / scanlineHeight));
-        
-        // =========================================================
-        // GFX UPGRADE: 3D DEPTH SHADING
-        // Je weiter der Balken im Hintergrund liegt (z < 0), 
-        // desto dunkler faden wir seine RGB-Werte ab (bis zu 35% Abdunklung).
-        // =========================================================
         const depthFactor = 0.82 + (z * 0.18); 
 
         for(let i = 0; i <= steps; i++) {
@@ -72,12 +63,10 @@ export class Copperbars {
                 b = cE[2] + (cBlk[2] - cE[2]) * n;
             }
             
-            // Tiefen-Dämpfung auf die RGB-Kanäle anwenden (Z ist hier absolut sicher befüllt!)
             r *= depthFactor;
             g *= depthFactor;
             b *= depthFactor;
 
-            // 12-Bit/9-Bit/6-Bit Hardware Quantisierung & DAC-Doubling
             let mask = (0xFF >> colorBitShift) << colorBitShift;
             let r_q = (r | 0) & mask; r_q |= (r_q >> (8 - colorBitShift));
             let g_q = (g | 0) & mask; g_q |= (g_q >> (8 - colorBitShift));
@@ -114,14 +103,20 @@ export class Copperbars {
         }
 
         // =========================================================
-        // CORES UPGRADE: 3D HELIX CALCULATOR WITH Z-SORTING
+        // DSP UPGRADE: SYMMETRICAL PHASE STAGGERING
+        // Wir takten alle Balken mit exakt derselben majestätischen Geschwindigkeit (0.55).
+        // Der Winkelabstand wird dynamisch geteilt (90° bei Amiga, 120° bei Atari/C64).
+        // Dadurch umkreisen sich die Balken in perfekter Symmetrie ohne Klumpenbildung!
         // =========================================================
+        const baseSpeed = 0.55; 
+        const phaseStep = (Math.PI * 2) / numBars; // Dynamische Kreisaufteilung
+
         const barsToDraw = [];
 
         for (let c = 0; c < numBars; c++) {
             const rawVol = channelVolumes[c] || 0;
             
-            // Tight Asymmetric Envelope Follower (0.8 Attack, 0.16 Decay)
+            // Tight Asymmetric Envelope Follower
             if (rawVol > this.smoothedVols[c]) {
                 this.smoothedVols[c] += (rawVol - this.smoothedVols[c]) * 0.8;
             } else {
@@ -129,15 +124,19 @@ export class Copperbars {
             }
             
             const smoothVol = this.smoothedVols[c];
-            const punch = smoothVol * 55; // Puls angepasst
+            const punch = smoothVol * 55; 
             
             const amplitude = height * this.heightWeights[c];
-            const angle = t * this.sinTimes[c] + this.sinOffsets[c];
+            
+            // Die Phase ist nun mathematisch exakt aufgeteilt
+            const angle = (t * baseSpeed) + (c * phaseStep);
             
             // Y-Welle (Sinus)
             let yCenter = (height / 2);
             yCenter += Math.sin(angle) * amplitude;
-            yCenter += Math.cos(angle * 1.37) * (amplitude * 0.25); // Lissajous
+            
+            // Ein Hauch asynchrone Z-Drift, die die perfekte Helix-Symmetrie nicht stört
+            yCenter += Math.cos(angle * 1.5) * (amplitude * 0.12);
             
             // Z-Tiefe (Cosinus)
             const zDepth = Math.cos(angle);
@@ -151,11 +150,10 @@ export class Copperbars {
             });
         }
 
-        // --- PAINTER'S ALGORITHM (1D Z-Buffer) ---
-        // Sortiert nach Z-Tiefe aufsteigend
+        // Painter's Algorithm (Z-Sorting)
         barsToDraw.sort((a, b) => a.z - b.z);
 
-        // Rendern im Z-Index mit korrekt übergebener Z-Koordinate!
+        // Rendern im Z-Index
         barsToDraw.forEach(bar => {
             this.drawCopperbar(ctx, width, bar.y - bar.h / 2, bar.h, bar.vol, bar.pal[0], bar.pal[1], scanlineHeight, colorBitShift, bar.z);
         });
