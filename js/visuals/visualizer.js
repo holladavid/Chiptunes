@@ -107,7 +107,10 @@ export function initVisuals(stateGetters, callbacks) {
         const isC64 = document.body.classList.contains('theme-c64');
         const lineColor = isAtari ? '#55ff55' : isAmiga ? '#ff8800' : '#6c5eb5';
         
-        drawReticle();
+        // Rasterlinien ebenfalls ausblenden, wenn das Gimmick läuft!
+        if (!showGimmick) {
+            drawReticle(); 
+        }
 
         const channelVolumes = stateGetters.getChannelVolumes ? stateGetters.getChannelVolumes() : [0, 0, 0, 0];
         let totalVol = 0;
