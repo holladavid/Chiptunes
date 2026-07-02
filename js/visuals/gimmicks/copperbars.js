@@ -6,12 +6,15 @@
 
 export class Copperbars {
     constructor() {
-        // Speed fast halbiert für eine majestätische, klassische Sinus-Schwingung
         this.sinTimes = [0.6, 0.85, 0.7, 0.95];
         this.sinOffsets = [0.0, 2.0, 4.0, 1.5];
-        this.baseThickness = [18, 14, 12, 10]; 
-        this.heightWeights = [0.28, 0.33, 0.22, 0.25];
         
+        // GFX UPGRADE: Massive, authentische Demoscene-Breite!
+        // Vorher: [18, 14, 12, 10] -> viel zu dünn für moderne Displays.
+        // Jetzt: Bis zu 160 Pixel dick, simuliert breite Register-Verläufe.
+        this.baseThickness = [160, 120, 90, 70]; 
+        
+        this.heightWeights = [0.28, 0.33, 0.22, 0.25];
         this.colorCache = {};
     }
 
@@ -79,7 +82,7 @@ export class Copperbars {
         }
     }
 
-    render(ctx, width, height, t, channelVolumes) {
+ render(ctx, width, height, t, channelVolumes) {
         const isAmiga = document.body.classList.contains('theme-amiga');
         const isAtari = document.body.classList.contains('theme-atari');
         const isC64 = document.body.classList.contains('theme-c64');
@@ -102,16 +105,14 @@ export class Copperbars {
             colorBitShift = 6;  
         }
 
-        // GFX FIX: Das 'screen' Blending wurde komplett entfernt!
-        // Rasterbars sind nun historisch korrekt opak und verdecken sich gegenseitig (Painter's Algorithm).
-        
         for (let c = 0; c < numBars; c++) {
             const vol = channelVolumes[c] || 0;
             
-            // Y-Bounce und Dicke stark gedrosselt, damit es nicht mehr so hektisch zuckt
-            const punch = Math.pow(vol, 1.5) * 20; 
-            const dynamicAmplitude = (height * this.heightWeights[c]) + (punch * 0.5);
+            // GFX UPGRADE: Das Pulsen (Punch) an die neue, wuchtige Balkengröße anpassen
+            const punch = Math.pow(vol, 1.5) * 40; // Vorher 20, jetzt atmet der fette Balken sanft mit
             
+            // Die Y-Auslenkung bleibt dynamisch, aber smooth
+            const dynamicAmplitude = (height * this.heightWeights[c]) + (punch * 0.5);
             const yCenter = (height / 2) + Math.sin(t * this.sinTimes[c] + this.sinOffsets[c]) * dynamicAmplitude;
             
             this.drawCopperbar(ctx, width, yCenter - (this.baseThickness[c] + punch) / 2, this.baseThickness[c] + punch, vol, pals[c][0], pals[c][1], scanlineHeight, colorBitShift);
