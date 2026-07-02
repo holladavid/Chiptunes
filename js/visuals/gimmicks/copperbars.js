@@ -6,7 +6,8 @@
 
 export class Copperbars {
     constructor() {
-        this.sinTimes = [1.3, 1.9, 1.6, 2.2];
+        // Speed fast halbiert für eine majestätische, klassische Sinus-Schwingung
+        this.sinTimes = [0.6, 0.85, 0.7, 0.95];
         this.sinOffsets = [0.0, 2.0, 4.0, 1.5];
         this.baseThickness = [18, 14, 12, 10]; 
         this.heightWeights = [0.28, 0.33, 0.22, 0.25];
@@ -91,41 +92,29 @@ export class Copperbars {
             isAmiga ? ['#111111', '#888888'] : []
         ];
 
-        // =========================================================
-        // GFX UPGRADE: DYNAMIC SYSTEM RESOLUTION & COLOR DEPTH
-        // Amiga: 12-Bit OCS (BitShift 4), glatte 4px Scanlines
-        // Atari: 9-Bit (BitShift 5), glatte 4px Scanlines
-        // C64: Brutale 16-Farben Näherung (BitShift 6), fette 8px Interrupt-Rasterbars
-        // =========================================================
         let scanlineHeight = 4;
-        let colorBitShift = 4; // 12-Bit default
+        let colorBitShift = 4; 
         
         if (isAtari) {
-            colorBitShift = 5; // 9-Bit Atari ST Palette (8 Stufen pro RGB-Kanal)
+            colorBitShift = 5; 
         } else if (isC64) {
-            scanlineHeight = 8; // Raster-Interrupts auf dem C64 kosteten Zeit, Balken waren dicker!
-            colorBitShift = 6;  // Brutale 4 Stufen pro RGB-Kanal zur Simulation der knappen C64 Palette
+            scanlineHeight = 8; 
+            colorBitShift = 6;  
         }
 
-        ctx.globalCompositeOperation = "screen"; 
+        // GFX FIX: Das 'screen' Blending wurde komplett entfernt!
+        // Rasterbars sind nun historisch korrekt opak und verdecken sich gegenseitig (Painter's Algorithm).
+        
         for (let c = 0; c < numBars; c++) {
             const vol = channelVolumes[c] || 0;
             
-            // =========================================================
-            // AUDIO-REACTIVE UPGRADE: NON-LINEAR PUNCH & Y-BOUNCE
-            // =========================================================
-            // Durch Math.pow(x, 1.5) reagiert der Balken viel explosiver auf Kicks (Transienten) 
-            // und fällt schneller ab, was "snappier" aussieht.
-            const punch = Math.pow(vol, 1.5) * 45; 
-            
-            // Audio-Reactive Amplitude: Die Auslenkung (Y-Bounce) der Sinuswelle 
-            // weitet sich synchron zur Lautstärke aus!
-            const dynamicAmplitude = (height * this.heightWeights[c]) + (punch * 1.5);
+            // Y-Bounce und Dicke stark gedrosselt, damit es nicht mehr so hektisch zuckt
+            const punch = Math.pow(vol, 1.5) * 20; 
+            const dynamicAmplitude = (height * this.heightWeights[c]) + (punch * 0.5);
             
             const yCenter = (height / 2) + Math.sin(t * this.sinTimes[c] + this.sinOffsets[c]) * dynamicAmplitude;
             
             this.drawCopperbar(ctx, width, yCenter - (this.baseThickness[c] + punch) / 2, this.baseThickness[c] + punch, vol, pals[c][0], pals[c][1], scanlineHeight, colorBitShift);
         }
-        ctx.globalCompositeOperation = "source-over";
     }
 }

@@ -98,8 +98,8 @@ export function initVisuals(stateGetters, callbacks) {
 
         const t = (performance.now() - startTime) * 0.001; 
         
-        // Background Phosphor Trail
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.38)'; 
+        // GFX FIX: Hard 50Hz CRT Clear (Keine Glow-Spur / Motion Blur mehr)
+        ctx.fillStyle = '#000000'; 
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const isAmiga = document.body.classList.contains('theme-amiga');
