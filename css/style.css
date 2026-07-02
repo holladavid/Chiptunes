@@ -526,11 +526,10 @@ body.theme-atari .tab-btn.active {
     top: 15px;
     left: 20px;
     z-index: 10;
-    pointer-events: none;
+    pointer-events: auto; /* WICHTIG: Vorher 'none', jetzt 'auto' für Klicks! */
+    cursor: pointer;      /* NEU: Zeigt an, dass es klickbar ist */
     display: flex;
     flex-direction: column;
-    
-    /* Sanftes, weiches Schweben (Auf und Ab) */
     animation: float-logo 3.5s ease-in-out infinite alternate;
 }
 

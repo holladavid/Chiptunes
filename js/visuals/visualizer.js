@@ -1,15 +1,12 @@
 // === js/visuals/visualizer.js ===
 // =========================================================
 // HIGH-PERFORMANCE RETROWAVE VISUALIZER MODULE
-// Optimized Phosphor Trail, Clean Copperbars & Fullscreen Clamping
+// Optimized Phosphor Trail, Clean Copperbars & Demoscene Gimmicks
 // =========================================================
 
 export function initVisuals(stateGetters, callbacks) {
     const canvas = document.getElementById('demo-canvas');
-    if (!canvas) {
-        console.warn('[VISUALIZER] Canvas-Element #demo-canvas nicht gefunden.');
-        return;
-    }
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d', { alpha: false }); 
     
@@ -17,16 +14,40 @@ export function initVisuals(stateGetters, callbacks) {
     let oscHistory = new Float32Array(historyLength).fill(NaN);
     let oscIndex = 0;
 
+    // --- EASTER EGG STATE ---
+    let showGimmick = false;
+    const logo = document.getElementById('brand-logo');
+    if (logo) {
+        logo.addEventListener('click', () => {
+            showGimmick = !showGimmick;
+            // Visuelles Feedback beim Klicken
+            logo.style.filter = 'brightness(2.0)';
+            setTimeout(() => logo.style.filter = '', 100);
+        });
+    }
+
+    // --- C64 STARFIELD DATA ---
+    const numStars = 150;
+    const stars = Array.from({ length: numStars }, () => ({
+        x: (Math.random() - 0.5) * 2000,
+        y: (Math.random() - 0.5) * 2000,
+        z: Math.random() * 1000 + 10
+    }));
+
+    // --- AMIGA CUBE DATA ---
+    const cubeVertices = [
+        [-1, -1, -1], [ 1, -1, -1], [ 1,  1, -1], [-1,  1, -1],
+        [-1, -1,  1], [ 1, -1,  1], [ 1,  1,  1], [-1,  1,  1]
+    ];
+    const cubeEdges = [
+        [0,1], [1,2], [2,3], [3,0], // Hinten
+        [4,5], [5,6], [6,7], [7,4], // Vorne
+        [0,4], [1,5], [2,6], [3,7]  // Verbindungen
+    ];
+
     function resizeCanvas() {
         const clientWidth = canvas.clientWidth;
         const clientHeight = canvas.clientHeight;
-        
-        // --- RETRO-RESOLUTION CLAMPING ---
-        // Um ein "Schmelzen" der GPU auf 4K/Retina-Displays zu verhindern und
-        // die Frequenz-Geschwindigkeit des Oszilloskops auf allen Bildschirmen
-        // absolut einheitlich zu halten, deckeln wir die maximale interne 
-        // Renderbreite auf 1280px (720p). Das heraufskalierte CSS-Bild erzeugt
-        // einen herrlich authentischen Röhren-Unschärfe-Look!
         const maxResolutionWidth = 1280;
         let scale = 1.0;
         
@@ -63,7 +84,6 @@ export function initVisuals(stateGetters, callbacks) {
     
     const startTime = performance.now();
     let hudCounter = 0; 
-
     const barCount = 48; 
     const peaks = new Array(barCount).fill(0); 
 
@@ -75,7 +95,6 @@ export function initVisuals(stateGetters, callbacks) {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
-        
         ctx.beginPath();
         ctx.moveTo(0, midY);
         ctx.lineTo(w, midY);
@@ -107,6 +126,116 @@ export function initVisuals(stateGetters, callbacks) {
         ctx.fillRect(0, y, w, height);
     }
 
+    // =========================================================
+    // THE DEMOSCENE GIMMICKS
+    // =========================================================
+
+    function renderC64Starfield(t, volume) {
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        // Warp Speed basiert auf der Gesamtlautstärke
+        const speed = 2 + (volume * 15); 
+        
+        ctx.fillStyle = '#6c5eb5'; // C64 Hellblau
+        
+        stars.forEach(star => {
+            star.z -= speed;
+            if (star.z <= 1) {
+                star.z = 1000;
+                star.x = (Math.random() - 0.5) * 2000;
+                star.y = (Math.random() - 0.5) * 2000;
+            }
+            
+            // 3D zu 2D Projektion
+            const px = cx + (star.x / star.z) * 500;
+            const py = cy + (star.y / star.z) * 500;
+            
+            if (px >= 0 && px <= canvas.width && py >= 0 && py <= canvas.height) {
+                const size = Math.max(1, (1000 - star.z) / 200);
+                // Je näher, desto weißer
+                ctx.fillStyle = star.z < 300 ? '#ffffff' : '#6c5eb5';
+                ctx.fillRect(px, py, size, size);
+            }
+        });
+    }
+
+    function renderAmigaCube(t, bassVolume) {
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        
+        // Rotation Angles
+        const rx = t * 0.8;
+        const ry = t * 1.2;
+        const rz = t * 0.5;
+        
+        // Der Würfel pulsiert im Takt des Basses (Kanal 0)
+        const scale = 80 + (bassVolume * 100);
+        
+        const projected = [];
+        
+        // 3D Rotations-Matrix
+        cubeVertices.forEach(v => {
+            let x = v[0], y = v[1], z = v[2];
+            
+            // Rot X
+            let y1 = y * Math.cos(rx) - z * Math.sin(rx);
+            let z1 = y * Math.sin(rx) + z * Math.cos(rx);
+            // Rot Y
+            let x2 = x * Math.cos(ry) + z1 * Math.sin(ry);
+            let z2 = -x * Math.sin(ry) + z1 * Math.cos(ry);
+            // Rot Z
+            let x3 = x2 * Math.cos(rz) - y1 * Math.sin(rz);
+            let y3 = x2 * Math.sin(rz) + y1 * Math.cos(rz);
+            
+            // Projection
+            const fov = 400;
+            const zOff = z2 + 4; // Abstand zur Kamera
+            const px = cx + (x3 * fov) / zOff * (scale / 100);
+            const py = cy + (y3 * fov) / zOff * (scale / 100);
+            projected.push({x: px, y: py});
+        });
+        
+        ctx.strokeStyle = '#ff8800'; // Amiga Orange
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        
+        cubeEdges.forEach(edge => {
+            const p1 = projected[edge[0]];
+            const p2 = projected[edge[1]];
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+        });
+        
+        ctx.stroke();
+    }
+
+    function renderAtariBobs(t, volume) {
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        const numBobs = 40;
+        
+        // Das Muster weitet sich bei lauten Tönen aus
+        const radius = (canvas.height * 0.25) + (volume * 100);
+        
+        ctx.fillStyle = '#55ff55'; // Atari ST Grün
+        
+        for (let i = 0; i < numBobs; i++) {
+            // Lissajous Figuren-Mathematik
+            const phase = i * 0.15;
+            const x = cx + Math.sin(t * 1.5 + phase) * radius * 1.5;
+            const y = cy + Math.sin(t * 2.3 + phase) * Math.cos(t * 1.1 + phase) * radius;
+            
+            // Dicker "Bob" (Pixel-Block)
+            const size = 8 + Math.sin(t * 3 + phase) * 4;
+            ctx.fillRect(x - size/2, y - size/2, size, size);
+        }
+    }
+
+    // =========================================================
+    // MAIN RENDER LOOP
+    // =========================================================
+
     function draw() {
         if (stateGetters.getEcoMode()) {
             callbacks.updateTimelineUI(); 
@@ -116,18 +245,31 @@ export function initVisuals(stateGetters, callbacks) {
 
         const t = (performance.now() - startTime) * 0.001; 
         
+        // Background
         ctx.fillStyle = 'rgba(0, 0, 0, 0.38)'; 
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const isAmiga = document.body.classList.contains('theme-amiga');
         const isAtari = document.body.classList.contains('theme-atari');
+        const isC64 = document.body.classList.contains('theme-c64');
         const lineColor = isAtari ? '#55ff55' : isAmiga ? '#ff8800' : '#6c5eb5';
         
         drawReticle();
 
         const channelVolumes = stateGetters.getChannelVolumes ? stateGetters.getChannelVolumes() : [0, 0, 0, 0];
-        const numBars = isAmiga ? 4 : 3;
+        let totalVol = 0;
+        for (let i=0; i<4; i++) totalVol += channelVolumes[i] || 0;
+        const avgVol = totalVol / 4.0;
 
+        // --- EASTER EGG RENDER INJECTION ---
+        if (showGimmick) {
+            if (isC64) renderC64Starfield(t, avgVol);
+            else if (isAmiga) renderAmigaCube(t, channelVolumes[0] || 0); // Reagiert primär auf Kanal 0 (oft Bass/Kick)
+            else if (isAtari) renderAtariBobs(t, avgVol);
+        }
+
+        // Copperbars
+        const numBars = isAmiga ? 4 : 3;
         const pals = [
             isAtari ? ['#003300', '#00aa00'] : isAmiga ? ['#000066', '#0055ff'] : ['#201a60', '#6c5eb5'],
             isAtari ? ['#333300', '#aaaa00'] : isAmiga ? ['#663300', '#ff8800'] : ['#660033', '#ff00aa'],
@@ -150,6 +292,7 @@ export function initVisuals(stateGetters, callbacks) {
         }
         ctx.globalCompositeOperation = "source-over";
 
+        // Oscilloscope Line
         const currentOscValue = stateGetters.getCurrentOscValue();
         const trackData = stateGetters.getTrackData();
         const trackLength = trackData ? (trackData.length || 0) : 0;
@@ -185,6 +328,7 @@ export function initVisuals(stateGetters, callbacks) {
         }
         ctx.shadowBlur = 0; 
 
+        // FFT Analyzer
         const activeAnalyser = stateGetters.getAnalyserNode();
         const isPlaying = stateGetters.getIsPlaying();
         const audioCtx = stateGetters.getAudioContext();
